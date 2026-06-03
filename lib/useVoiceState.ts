@@ -6,6 +6,8 @@ import { useSpeechRecognition } from "@/lib/useSpeechRecognition";
 import { useAudioRecorder } from "@/lib/useAudioRecorder";
 import { useAudioPlayer } from "@/lib/useAudioPlayer";
 import { useSpeechSynthesis } from "@/lib/useSpeechSynthesis";
+import { useStreamingAudioPlayer } from "@/lib/useStreamingAudioPlayer";
+import { isKokoroConfigured, kokoroSpeak } from "@/lib/kokoroClient";
 
 const initialState: VoiceStateShape = {
   state: "idle",
@@ -41,6 +43,8 @@ export interface UseVoiceStateOptions {
   micSensitivity?: number;
   /** If true, silence after speech auto-stops listening. */
   autoStop?: boolean;
+  /** TTS engine: "system" (fast, browser) or "kokoro" (high-quality, local). */
+  voiceEngine?: "system" | "kokoro";
   onConversationComplete?: (conversation: Conversation) => void;
   onError?: (message: string) => void;
 }
@@ -54,6 +58,7 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     voiceId,
     micSensitivity = 75,
     autoStop = true,
+    voiceEngine = "system",
     onConversationComplete,
     onError,
   } = options;
@@ -72,18 +77,21 @@ export function useVoiceState(options: UseVoiceStateOptions) {
   const voiceIdRef = useRef(voiceId);
   const sensitivityRef = useRef(micSensitivity);
   const autoStopRef = useRef(autoStop);
+  const voiceEngineRef = useRef(voiceEngine);
   const optionsRef = useRef({ onConversationComplete, onError });
 
   stateRef.current = voice.state;
   voiceIdRef.current = voiceId;
   sensitivityRef.current = micSensitivity;
   autoStopRef.current = autoStop;
+  voiceEngineRef.current = voiceEngine;
   optionsRef.current = { onConversationComplete, onError };
 
   const speech = useSpeechRecognition();
   const recorder = useAudioRecorder();
   const player = useAudioPlayer();
   const synth = useSpeechSynthesis();
+  const streamingPlayer = useStreamingAudioPlayer();
 
   // Web Speech where supported (Chrome, Edge, Brave-with-toggle, Android Chrome):
   // instant interim transcripts, no network round-trip.
@@ -197,74 +205,65 @@ export function useVoiceState(options: UseVoiceStateOptions) {
       }
       if (cancelledRef.current) return;
 
-      if (cancelledRef.current) return;
-
-      // STEP 2: TTS — browser speechSynthesis primary path.
-      // Instant, free, no network. /api/speak (Kokoro/OpenAI) is only used
-      // for voice previews on the Settings page now, since Kokoro on CPU
-      // is too slow for real conversational responses.
+      // STEP 2: TTS — engine choice driven by Settings.
       const finishCycle = () => {
         completeConversation(transcript, finalResponse);
         dispatch({ type: "RESET" });
         finalSeenRef.current = "";
       };
 
-      if (synth.isSupported) {
+      const playWithSynth = () => {
+        if (!synth.isSupported) {
+          // No audio path available. Still complete (text saved).
+          finishCycle();
+          return;
+        }
         dispatch({ type: "SET_SPEAKING" });
         synth.setOnEnd(finishCycle);
         const started = synth.speak(finalResponse, voiceIdRef.current);
-        if (!started) {
-          // synth refused (no text, or browser issue); just complete silently
-          finishCycle();
-        }
+        if (!started) finishCycle();
+      };
+
+      // User chose system voice, OR Kokoro isn't configured.
+      if (voiceEngineRef.current === "system" || !isKokoroConfigured()) {
+        playWithSynth();
         return;
       }
 
-      // Fallback: server TTS (Kokoro → OpenAI) for browsers without speechSynthesis.
+      // Kokoro path. On any failure, fall back to system voice so the
+      // conversation never silently hangs.
       let speakRes: Response;
       try {
-        speakRes = await fetch("/api/speak", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            text: finalResponse,
-            voiceId: voiceIdRef.current,
-          }),
+        speakRes = await kokoroSpeak({
+          text: finalResponse,
+          voiceId: voiceIdRef.current,
           signal: controller.signal,
         });
       } catch (e) {
         if (controller.signal.aborted) return;
-        reportError(e instanceof Error ? e.message : "tts request failed");
-        completeConversation(transcript, finalResponse);
-        dispatch({ type: "RESET" });
-        return;
-      }
-
-      if (!speakRes.ok) {
-        const text = await speakRes.text().catch(() => "");
-        reportError(`tts failed: ${text.slice(0, 120) || speakRes.status}`);
-        completeConversation(transcript, finalResponse);
-        dispatch({ type: "RESET" });
-        return;
-      }
-
-      let blob: Blob;
-      try {
-        blob = await speakRes.blob();
-      } catch (e) {
-        reportError(e instanceof Error ? e.message : "tts blob read failed");
-        completeConversation(transcript, finalResponse);
-        dispatch({ type: "RESET" });
+        console.warn(
+          "Kokoro TTS unreachable, falling back to system voice:",
+          e instanceof Error ? e.message : e,
+        );
+        playWithSynth();
         return;
       }
 
       if (cancelledRef.current) return;
 
       dispatch({ type: "SET_SPEAKING" });
-      player.setOnEnd(finishCycle);
-      player.playBlob(blob);
+      streamingPlayer.setOnEnd(finishCycle);
+      try {
+        await streamingPlayer.playStream(speakRes, "audio/mpeg");
+      } catch (e) {
+        console.warn(
+          "Streaming playback failed, falling back to system voice:",
+          e instanceof Error ? e.message : e,
+        );
+        playWithSynth();
+      }
     },
-    [player, synth, reportError, completeConversation],
+    [synth, streamingPlayer, reportError, completeConversation],
   );
 
   useEffect(() => {
@@ -448,16 +447,19 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     speech.reset();
     player.stop();
     synth.stop();
+    streamingPlayer.stop();
     dispatch({ type: "RESET" });
-  }, [speech, player, synth]);
+  }, [speech, player, synth, streamingPlayer]);
 
   // Unmount-only cleanup. Empty deps + ref reads = runs exactly once on unmount.
   // (Previously had `[player]` which re-fired every render because useAudioPlayer's
   // return object identity changes, aborting in-flight chat/tts fetches mid-cycle.)
   const playerRef = useRef(player);
   const synthRef = useRef(synth);
+  const streamingPlayerRef = useRef(streamingPlayer);
   playerRef.current = player;
   synthRef.current = synth;
+  streamingPlayerRef.current = streamingPlayer;
   useEffect(() => {
     return () => {
       cancelledRef.current = true;
@@ -467,6 +469,7 @@ export function useVoiceState(options: UseVoiceStateOptions) {
       partialAbortRef.current = null;
       playerRef.current.stop();
       synthRef.current.stop();
+      streamingPlayerRef.current.stop();
     };
   }, []);
 

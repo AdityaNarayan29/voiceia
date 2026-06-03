@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Mic, Clock, Settings } from "lucide-react";
+import { Mic, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface Tab {
@@ -13,7 +13,6 @@ interface Tab {
 
 const TABS: Tab[] = [
   { href: "/app", label: "Talk", Icon: Mic },
-  { href: "/history", label: "History", Icon: Clock },
   { href: "/settings", label: "Settings", Icon: Settings },
 ];
 

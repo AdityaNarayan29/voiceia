@@ -2,18 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
+import { Menu, Plus, History as HistoryIcon } from "lucide-react";
 import { MicButton } from "@/components/MicButton";
 import { Waveform } from "@/components/Waveform";
 import { StatusPill } from "@/components/StatusPill";
 import { VoiceSelector } from "@/components/VoiceSelector";
 import { BottomNav } from "@/components/BottomNav";
 import { MicPermissionSheet } from "@/components/MicPermissionSheet";
+import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { useVoiceState } from "@/lib/useVoiceState";
 import { useConversationHistory } from "@/lib/useConversationHistory";
 import { useNetworkStatus } from "@/lib/useNetworkStatus";
 import { useSettings } from "@/lib/useSettings";
+import { useEdgeSwipe } from "@/lib/useEdgeSwipe";
 import { DEFAULT_VOICE_ID } from "@/lib/constants";
 import type { Conversation, Message } from "@/lib/types";
 
@@ -26,8 +29,12 @@ const TranscriptArea = dynamic(
 );
 
 export default function VoicePage() {
-  const [sessionMessages, setSessionMessages] = useState<Message[]>([]);
+  // The live conversation in progress — always auto-saved on completion.
+  const [liveMessages, setLiveMessages] = useState<Message[]>([]);
+  // A past conversation being viewed (read-only). null = live mode.
+  const [viewing, setViewing] = useState<Conversation | null>(null);
   const [permissionSheetOpen, setPermissionSheetOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const { addConversation } = useConversationHistory();
   const { isOnline } = useNetworkStatus();
   const { settings, update, hydrated } = useSettings();
@@ -39,7 +46,8 @@ export default function VoicePage() {
 
   const handleConversationComplete = useCallback(
     (conversation: Conversation) => {
-      setSessionMessages((prev) => [...prev, ...conversation.messages]);
+      // Always save the live turn; never mutate viewing state.
+      setLiveMessages((prev) => [...prev, ...conversation.messages]);
       addConversation(conversation);
     },
     [addConversation],
@@ -62,6 +70,7 @@ export default function VoicePage() {
     voiceId: voice,
     micSensitivity: settings.micSensitivity,
     autoStop: settings.autoStop,
+    voiceEngine: settings.voiceEngine,
     onConversationComplete: handleConversationComplete,
     onError: handleError,
   });
@@ -72,20 +81,41 @@ export default function VoicePage() {
     }
   }, [permissionError]);
 
+  const openHistory = useCallback(() => setHistoryOpen(true), []);
+  useEdgeSwipe({
+    edge: "left",
+    onSwipe: openHistory,
+    disabled: historyOpen || state === "listening",
+  });
+
+  const handleSelectConversation = useCallback((c: Conversation) => {
+    setViewing(c);
+  }, []);
+
+  const handleBackToLive = useCallback(() => {
+    setViewing(null);
+  }, []);
+
   const handleMicPress = useCallback(() => {
     if (!isOnline) {
       toast.error("You're offline — voice features need an internet connection.");
       return;
     }
+    // Speaking always operates on the live thread. Exit viewing mode first.
+    if (viewing) setViewing(null);
     if (state === "idle") startListening();
     else if (state === "listening") stopListening();
-  }, [isOnline, state, startListening, stopListening]);
+  }, [isOnline, state, startListening, stopListening, viewing]);
 
   const displayMessages = useMemo<Message[]>(() => {
-    const live: Message[] = [];
+    // When viewing a past chat, show only its messages (read-only).
+    if (viewing) return viewing.messages;
+
+    // Live mode: persisted turns plus the in-flight transcript/response.
+    const pending: Message[] = [];
     if (state === "processing" || state === "speaking") {
       if (transcript) {
-        live.push({
+        pending.push({
           id: "live-user",
           role: "user",
           content: transcript,
@@ -93,7 +123,7 @@ export default function VoicePage() {
         });
       }
       if (aiResponse) {
-        live.push({
+        pending.push({
           id: "live-assistant",
           role: "assistant",
           content: aiResponse,
@@ -101,8 +131,8 @@ export default function VoicePage() {
         });
       }
     }
-    return [...sessionMessages, ...live];
-  }, [sessionMessages, state, transcript, aiResponse]);
+    return [...liveMessages, ...pending];
+  }, [viewing, liveMessages, state, transcript, aiResponse]);
 
   return (
     <motion.main
@@ -121,14 +151,56 @@ export default function VoicePage() {
       )}
 
       <header
-        className="flex items-center justify-between px-6 pt-4"
+        className="flex items-center justify-between gap-3 px-4 pt-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
       >
-        <span className="font-syne text-sm font-semibold text-textMuted">
-          VoiceAI
-        </span>
+        <button
+          type="button"
+          onClick={openHistory}
+          aria-label="Open conversation history"
+          aria-expanded={historyOpen}
+          aria-controls="history-drawer"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-borderSoft bg-bgCard text-textPrimary transition-colors hover:border-accent/30 hover:text-accent"
+        >
+          <Menu size={20} aria-hidden />
+        </button>
         <VoiceSelector value={voice} onChange={setVoice} />
       </header>
+
+      <AnimatePresence initial={false}>
+        {viewing && (
+          <motion.div
+            key="viewing-pill"
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-full border border-accent/25 bg-accent/5 px-3 py-2"
+            role="status"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              <HistoryIcon size={14} className="shrink-0 text-accent" aria-hidden />
+              <span className="truncate font-geistMono text-[11px] text-textMuted">
+                Viewing past chat ·{" "}
+                <span className="text-textPrimary">
+                  {new Date(viewing.timestamp).toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </span>
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleBackToLive}
+              className="inline-flex h-8 shrink-0 items-center gap-1 rounded-full bg-accent px-3 font-geistMono text-[11px] font-semibold text-bgPrimary transition-colors hover:bg-accent/90"
+            >
+              <Plus size={12} aria-hidden />
+              {liveMessages.length > 0 ? "Back to live" : "New chat"}
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <section className="flex flex-1 flex-col items-center justify-center gap-8 px-4">
         <Waveform state={state} level={micLevel} />
@@ -153,6 +225,13 @@ export default function VoicePage() {
       <MicPermissionSheet
         open={permissionSheetOpen}
         onOpenChange={setPermissionSheetOpen}
+      />
+
+      <HistoryDrawer
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onSelect={handleSelectConversation}
+        activeId={viewing?.id ?? null}
       />
     </motion.main>
   );

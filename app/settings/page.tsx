@@ -1,53 +1,158 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { Loader2, Pause, Play } from "lucide-react";
 import {
-  RadioGroup,
-  RadioGroupItem,
-} from "@/components/ui/radio-group";
+  Check,
+  Info,
+  Loader2,
+  Mic,
+  MicOff,
+  Palette,
+  Pause,
+  Play,
+  Volume2,
+  type LucideIcon,
+} from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import { BottomNav } from "@/components/BottomNav";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { MicLevelMeter } from "@/components/MicLevelMeter";
 import { VOICES } from "@/lib/constants";
 import { useSettings } from "@/lib/useSettings";
-import { useAudioPlayer } from "@/lib/useAudioPlayer";
+import { useAudioRecorder } from "@/lib/useAudioRecorder";
+import { useStreamingAudioPlayer } from "@/lib/useStreamingAudioPlayer";
+import { isKokoroConfigured, kokoroSpeak } from "@/lib/kokoroClient";
+import { cn } from "@/lib/utils";
 
+const MIC_TEST_MAX_MS = 30_000;
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.1.0";
-
 const PREVIEW_TEXT =
   "Hi, I'm here to talk with you. Tap the mic and let's get started.";
 
-function SectionHeader({ children }: { children: React.ReactNode }) {
+function SectionCard({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: LucideIcon;
+  children: React.ReactNode;
+}) {
   return (
-    <h2 className="mb-3 font-syne text-xs font-semibold uppercase tracking-wider text-textMuted">
-      {children}
-    </h2>
+    <section className="overflow-hidden rounded-2xl border border-borderSoft bg-bgCard shadow-[0_1px_0_var(--border-soft)]">
+      <header className="flex items-center gap-2 border-b border-borderSoft bg-bgSecondary/40 px-4 py-3">
+        <span
+          aria-hidden
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-accent/10 text-accent"
+        >
+          <Icon size={14} aria-hidden />
+        </span>
+        <h2 className="font-syne text-[11px] font-semibold uppercase tracking-[0.18em] text-textMuted">
+          {title}
+        </h2>
+      </header>
+      <div className="p-4">{children}</div>
+    </section>
   );
 }
 
-function Row({ children }: { children: React.ReactNode }) {
+function ControlRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="flex min-h-[48px] items-center justify-between gap-4 py-2">
-      {children}
+    <div className="flex min-h-[48px] items-center justify-between gap-4">
+      <div className="min-w-0 flex-1">
+        <p className="font-geistMono text-sm text-textPrimary">{label}</p>
+        {hint && (
+          <p className="mt-0.5 font-geistMono text-[11px] text-textMuted">
+            {hint}
+          </p>
+        )}
+      </div>
+      <div className="shrink-0">{children}</div>
     </div>
   );
 }
 
 export default function SettingsPage() {
   const { settings, update, hydrated } = useSettings();
-  const player = useAudioPlayer();
+  const streamingPlayer = useStreamingAudioPlayer();
+  const recorder = useAudioRecorder();
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [testingMic, setTestingMic] = useState(false);
+  const testTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const startMicTest = useCallback(
+    async (sensitivity: number) => {
+      await recorder.startRecording({
+        sensitivity,
+        autoStop: false,
+      });
+      if (recorder.error) {
+        toast.error(recorder.error);
+        setTestingMic(false);
+        return;
+      }
+    },
+    [recorder],
+  );
+
+  const stopMicTest = useCallback(async () => {
+    if (testTimerRef.current) {
+      clearTimeout(testTimerRef.current);
+      testTimerRef.current = null;
+    }
+    await recorder.stopRecording();
+    setTestingMic(false);
+  }, [recorder]);
+
+  const toggleMicTest = useCallback(async () => {
+    if (testingMic) {
+      await stopMicTest();
+      return;
+    }
+    setTestingMic(true);
+    await startMicTest(settings.micSensitivity);
+    testTimerRef.current = setTimeout(() => {
+      void stopMicTest();
+      toast.info("Mic test stopped after 30s.");
+    }, MIC_TEST_MAX_MS);
+  }, [testingMic, startMicTest, stopMicTest, settings.micSensitivity]);
+
+  useEffect(() => {
+    if (!testingMic) return;
+    let cancelled = false;
+    void (async () => {
+      await recorder.stopRecording();
+      if (cancelled) return;
+      await startMicTest(settings.micSensitivity);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.micSensitivity]);
+
+  useEffect(() => {
+    return () => {
+      if (testTimerRef.current) clearTimeout(testTimerRef.current);
+    };
+  }, []);
 
   const stopPreview = useCallback(() => {
-    player.stop();
+    streamingPlayer.stop();
     setPreviewingId(null);
-  }, [player]);
+  }, [streamingPlayer]);
 
   const playPreview = useCallback(
     async (voiceId: string) => {
@@ -56,36 +161,28 @@ export default function SettingsPage() {
         return;
       }
       stopPreview();
+
+      if (!isKokoroConfigured()) {
+        toast.error(
+          "Set NEXT_PUBLIC_KOKORO_URL in .env.local to enable voice previews.",
+        );
+        return;
+      }
+
       setLoadingId(voiceId);
       try {
-        const res = await fetch("/api/speak", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text: PREVIEW_TEXT, voiceId }),
-        });
-        if (!res.ok) {
-          const errText = await res.text().catch(() => "");
-          let message = `Preview failed (${res.status})`;
-          try {
-            const parsed = JSON.parse(errText) as { error?: string };
-            if (parsed.error) message = parsed.error;
-          } catch {
-            if (errText) message = errText.slice(0, 160);
-          }
-          toast.error(message);
-          return;
-        }
-        const blob = await res.blob();
+        const res = await kokoroSpeak({ text: PREVIEW_TEXT, voiceId });
         setPreviewingId(voiceId);
-        player.setOnEnd(() => setPreviewingId(null));
-        player.playBlob(blob);
+        streamingPlayer.setOnEnd(() => setPreviewingId(null));
+        await streamingPlayer.playStream(res, "audio/mpeg");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Preview failed");
+        setPreviewingId(null);
       } finally {
         setLoadingId(null);
       }
     },
-    [player, previewingId, stopPreview],
+    [previewingId, stopPreview, streamingPlayer],
   );
 
   return (
@@ -93,150 +190,302 @@ export default function SettingsPage() {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="min-h-[100dvh] px-4 py-6 pb-[100px]"
+      className="min-h-[100dvh] pb-[100px]"
       style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.5rem)" }}
     >
-      <h1 className="mb-6 font-syne text-lg font-bold text-textPrimary">
-        Settings
-      </h1>
+      <div className="mx-auto w-full max-w-md px-4 sm:max-w-2xl lg:max-w-5xl lg:px-6">
+        <header className="mb-6">
+          <h1 className="font-syne text-2xl font-bold text-textPrimary sm:text-3xl">
+            Settings
+          </h1>
+          <p className="mt-1 font-geistMono text-xs text-textMuted sm:text-sm">
+            Personalize how VoiceAI sounds and behaves.
+          </p>
+        </header>
 
-      <section className="mb-2">
-        <SectionHeader>Voice</SectionHeader>
-        <p className="mb-3 font-geistMono text-xs text-textMuted">
-          Default Voice
-        </p>
-        <RadioGroup
-          value={settings.voiceId}
-          onValueChange={(v) => update("voiceId", v)}
-          disabled={!hydrated}
-          className="flex flex-col gap-2"
-        >
-          {VOICES.map((voice) => {
-            const isLoading = loadingId === voice.id;
-            const isPlaying = previewingId === voice.id;
-            return (
-              <div
-                key={voice.id}
-                className="flex min-h-[48px] items-center gap-3 rounded-lg border border-borderSoft bg-bgCard px-3 py-2"
-              >
-                <label
-                  htmlFor={`voice-${voice.id}`}
-                  className="flex flex-1 cursor-pointer items-center gap-3"
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
+
+        <div className="lg:col-span-2">
+          <SectionCard title="Voice" icon={Volume2}>
+          <p className="mb-3 font-geistMono text-[11px] text-textMuted">
+            Choose the voice for previews. Chat uses your system voice.
+          </p>
+          <div
+            role="radiogroup"
+            aria-label="Default voice"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+          >
+            {VOICES.map((voice) => {
+              const selected = settings.voiceId === voice.id;
+              const isLoading = loadingId === voice.id;
+              const isPlaying = previewingId === voice.id;
+              return (
+                <div
+                  key={voice.id}
+                  className={cn(
+                    "relative flex flex-col gap-2 rounded-xl border p-3 transition-colors",
+                    selected
+                      ? "border-accent/60 bg-accent/5"
+                      : "border-borderSoft bg-bgSecondary/40 hover:border-borderStrong",
+                  )}
                 >
-                  <RadioGroupItem
-                    id={`voice-${voice.id}`}
-                    value={voice.id}
-                    className="border-textMuted text-accent"
-                  />
-                  <div className="flex flex-1 items-center justify-between gap-2">
-                    <span className="font-syne text-sm font-semibold text-textPrimary">
-                      {voice.name}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={`Select ${voice.name}, ${voice.tone}`}
+                    disabled={!hydrated}
+                    onClick={() => update("voiceId", voice.id)}
+                    className="flex flex-1 flex-col items-start gap-1 text-left focus-visible:outline-none"
+                  >
+                    <span className="flex w-full items-start justify-between gap-1">
+                      <span className="font-syne text-sm font-semibold text-textPrimary">
+                        {voice.name}
+                      </span>
+                      {selected && (
+                        <span
+                          aria-hidden
+                          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent text-bgPrimary"
+                        >
+                          <Check size={10} strokeWidth={3} aria-hidden />
+                        </span>
+                      )}
                     </span>
-                    <span className="rounded-full bg-accent/10 px-2 py-0.5 font-geistMono text-[10px] text-accent">
+                    <span
+                      className={cn(
+                        "rounded-full px-1.5 py-0.5 font-geistMono text-[10px]",
+                        selected
+                          ? "bg-accent/15 text-accent"
+                          : "bg-borderSoft text-textMuted",
+                      )}
+                    >
                       {voice.tone}
                     </span>
-                  </div>
-                </label>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => playPreview(voice.id)}
+                    disabled={isLoading}
+                    aria-label={
+                      isPlaying
+                        ? `Stop ${voice.name} preview`
+                        : `Play ${voice.name} preview`
+                    }
+                    className={cn(
+                      "inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md border font-geistMono text-[11px] transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bgCard",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                      isPlaying
+                        ? "border-accent/60 bg-accent text-bgPrimary"
+                        : "border-borderSoft bg-bgPrimary/40 text-textPrimary hover:border-accent/40 hover:text-accent",
+                    )}
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 size={12} className="animate-spin" aria-hidden />
+                        Loading
+                      </>
+                    ) : isPlaying ? (
+                      <>
+                        <Pause size={12} aria-hidden />
+                        Playing
+                      </>
+                    ) : (
+                      <>
+                        <Play size={12} aria-hidden />
+                        Preview
+                      </>
+                    )}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </SectionCard>
+        </div>
+
+        <SectionCard title="Audio" icon={Mic}>
+          <div className="space-y-5">
+            <div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <p className="font-geistMono text-sm text-textPrimary">
+                  Voice engine
+                </p>
+                <span className="font-geistMono text-[10px] uppercase tracking-wider text-textMuted">
+                  {settings.voiceEngine === "system" ? "Fast" : "High quality"}
+                </span>
+              </div>
+              <div
+                role="radiogroup"
+                aria-label="Voice engine"
+                className="grid grid-cols-2 gap-1 rounded-lg border border-borderSoft bg-bgSecondary/40 p-1"
+              >
+                {[
+                  {
+                    id: "system" as const,
+                    label: "System voice",
+                    sub: "Instant · OS voices",
+                  },
+                  {
+                    id: "kokoro" as const,
+                    label: "Kokoro",
+                    sub: "Higher quality · slower",
+                  },
+                ].map((opt) => {
+                  const active = settings.voiceEngine === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      disabled={!hydrated}
+                      onClick={() => update("voiceEngine", opt.id)}
+                      className={cn(
+                        "flex flex-col items-start gap-0.5 rounded-md px-3 py-2 text-left transition-colors",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        active
+                          ? "bg-accent/10 text-accent shadow-[inset_0_0_0_1px_var(--accent)]"
+                          : "text-textPrimary hover:bg-bgCard",
+                      )}
+                    >
+                      <span className="font-syne text-xs font-semibold">
+                        {opt.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "font-geistMono text-[10px]",
+                          active ? "text-accent/80" : "text-textMuted",
+                        )}
+                      >
+                        {opt.sub}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2 font-geistMono text-[11px] text-textMuted">
+                {settings.voiceEngine === "system"
+                  ? "Uses your OS voice (Samantha, Daniel, etc.). Plays instantly."
+                  : "Uses local Kokoro. Voice matches the previews above. Audio takes ~10–20s to start on CPU."}
+              </p>
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-baseline justify-between">
+                <p className="font-geistMono text-sm text-textPrimary">
+                  Mic Sensitivity
+                </p>
+                <span className="font-geistMono text-xs tabular-nums text-textMuted">
+                  {settings.micSensitivity}
+                </span>
+              </div>
+              <Slider
+                value={[settings.micSensitivity]}
+                min={0}
+                max={100}
+                step={5}
+                disabled={!hydrated}
+                onValueChange={(v) => update("micSensitivity", v[0] ?? 0)}
+                className="mb-3"
+              />
+
+              <div className="flex items-center gap-3 rounded-lg border border-borderSoft bg-bgSecondary/40 px-3 py-2">
                 <button
                   type="button"
-                  onClick={() => playPreview(voice.id)}
-                  disabled={isLoading}
-                  aria-label={
-                    isPlaying
-                      ? `Stop ${voice.name} preview`
-                      : `Play ${voice.name} preview`
-                  }
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-accent/30 bg-accent/5 text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => void toggleMicTest()}
+                  disabled={!hydrated}
+                  aria-label={testingMic ? "Stop mic test" : "Start mic test"}
+                  aria-pressed={testingMic}
+                  className={cn(
+                    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bgCard",
+                    "disabled:cursor-not-allowed disabled:opacity-50",
+                    testingMic
+                      ? "border-error/40 bg-error/10 text-error hover:bg-error/20"
+                      : "border-accent/30 bg-accent/5 text-accent hover:bg-accent/15",
+                  )}
                 >
-                  {isLoading ? (
-                    <Loader2 size={16} className="animate-spin" aria-hidden />
-                  ) : isPlaying ? (
-                    <Pause size={16} aria-hidden />
+                  {testingMic ? (
+                    <MicOff size={14} aria-hidden />
                   ) : (
-                    <Play size={16} aria-hidden />
+                    <Mic size={14} aria-hidden />
                   )}
                 </button>
+                <MicLevelMeter
+                  level={recorder.level}
+                  inactive={!testingMic}
+                  className="flex-1"
+                />
+                <span className="w-8 text-right font-geistMono text-[10px] tabular-nums text-textMuted">
+                  {testingMic ? Math.round(recorder.level * 100) : "—"}
+                </span>
               </div>
-            );
-          })}
-        </RadioGroup>
-      </section>
+              <p className="mt-2 font-geistMono text-[11px] text-textMuted">
+                {testingMic
+                  ? "Speak normally. Adjust the slider while green bars light up."
+                  : "Tap to test. Aim for green bars when talking at normal volume."}
+              </p>
+            </div>
 
-      <Separator className="my-6 bg-borderSoft" />
+            <div className="border-t border-borderSoft pt-3">
+              <ControlRow
+                label="Auto-stop listening"
+                hint="Stop recording after ~1.5s of silence"
+              >
+                <Switch
+                  checked={settings.autoStop}
+                  onCheckedChange={(v) => update("autoStop", v)}
+                  disabled={!hydrated}
+                />
+              </ControlRow>
+            </div>
+          </div>
+        </SectionCard>
 
-      <section className="mb-2">
-        <SectionHeader>Audio</SectionHeader>
-        <Row>
-          <span className="font-geistMono text-sm text-textPrimary">
-            Mic Sensitivity
-          </span>
-          <span className="font-geistMono text-xs text-textMuted">
-            {settings.micSensitivity}
-          </span>
-        </Row>
-        <Slider
-          value={[settings.micSensitivity]}
-          min={0}
-          max={100}
-          step={5}
-          disabled={!hydrated}
-          onValueChange={(v) => update("micSensitivity", v[0] ?? 0)}
-          className="my-2"
-        />
-        <Row>
-          <span className="font-geistMono text-sm text-textPrimary">
-            Auto-stop listening
-          </span>
-          <Switch
-            checked={settings.autoStop}
-            onCheckedChange={(v) => update("autoStop", v)}
-            disabled={!hydrated}
-          />
-        </Row>
-      </section>
+        <SectionCard title="Appearance" icon={Palette}>
+          <ControlRow
+            label="Dark Mode"
+            hint={
+              settings.darkMode
+                ? "Switch off for a light interface."
+                : "Switch on for the dark futurist look."
+            }
+          >
+            <ThemeToggle
+              value={settings.darkMode}
+              onChange={(v) => update("darkMode", v)}
+              disabled={!hydrated}
+            />
+          </ControlRow>
+        </SectionCard>
 
-      <Separator className="my-6 bg-borderSoft" />
-
-      <section className="mb-2">
-        <SectionHeader>Appearance</SectionHeader>
-        <Row>
-          <span className="font-geistMono text-sm text-textPrimary">
-            Dark Mode
-          </span>
-          <ThemeToggle
-            value={settings.darkMode}
-            onChange={(v) => update("darkMode", v)}
-            disabled={!hydrated}
-          />
-        </Row>
-        <p className="font-geistMono text-[11px] text-textMuted">
-          {settings.darkMode
-            ? "Switch off for a light interface."
-            : "Switch on for the dark futurist look."}
-        </p>
-      </section>
-
-      <Separator className="my-6 bg-borderSoft" />
-
-      <section>
-        <SectionHeader>About</SectionHeader>
-        <Row>
-          <span className="font-geistMono text-sm text-textPrimary">
-            Version
-          </span>
-          <span className="font-geistMono text-xs text-textMuted">
-            {APP_VERSION}
-          </span>
-        </Row>
-        <Row>
-          <span className="font-geistMono text-sm text-textPrimary">
-            Built with
-          </span>
-          <span className="font-geistMono text-xs text-textMuted">
-            Next.js + Groq + Kokoro
-          </span>
-        </Row>
-      </section>
+        <SectionCard title="About" icon={Info}>
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 font-geistMono text-xs">
+            <dt className="text-textMuted">Version</dt>
+            <dd className="text-right text-textPrimary tabular-nums">
+              {APP_VERSION}
+            </dd>
+            <dt className="text-textMuted">Built with</dt>
+            <dd className="text-right text-textPrimary">
+              Next.js · Groq · Kokoro
+            </dd>
+            <dt className="text-textMuted">Source</dt>
+            <dd className="text-right">
+              <a
+                href="https://github.com/AdityaNarayan29/voiceia"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent transition-colors hover:underline"
+              >
+                github.com/voiceia
+              </a>
+            </dd>
+          </dl>
+        </SectionCard>
+        </div>
+      </div>
 
       <BottomNav />
     </motion.main>

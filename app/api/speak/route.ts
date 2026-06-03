@@ -1,4 +1,4 @@
-export const runtime = "nodejs";
+export const runtime = "edge";
 
 const KOKORO_VOICE_MAP: Record<string, string> = {
   calm: "af_bella",
@@ -28,7 +28,13 @@ async function callKokoro(
   return fetch(`${baseUrl.replace(/\/$/, "")}/v1/audio/speech`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: "kokoro", input: text, voice }),
+    body: JSON.stringify({
+      model: "kokoro",
+      input: text,
+      voice,
+      response_format: "mp3",
+      stream: true,
+    }),
   });
 }
 
@@ -70,10 +76,15 @@ export async function POST(request: Request) {
     );
   }
 
-  return new Response(upstream.body, {
+  // Use a TransformStream pipeline so the runtime can't buffer.
+  // pipeThrough(new TransformStream()) keeps it as a streaming Response
+  // all the way down without our code touching individual chunks.
+  return new Response(upstream.body.pipeThrough(new TransformStream()), {
     headers: {
       "content-type": upstream.headers.get("content-type") ?? "audio/mpeg",
       "cache-control": "no-store",
+      "x-accel-buffering": "no",
+      "transfer-encoding": "chunked",
     },
   });
 }

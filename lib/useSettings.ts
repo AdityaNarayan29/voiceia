@@ -5,11 +5,22 @@ import { DEFAULT_VOICE_ID } from "@/lib/constants";
 
 const STORAGE_KEY = "voiceai-settings";
 
+/**
+ * Voice engine for chat playback.
+ * - "system": browser speechSynthesis. Instant, free, ships with the OS.
+ *             Voice quality varies (macOS Samantha-type voices).
+ * - "kokoro": local Kokoro container hit directly from the browser.
+ *             Higher-quality neural voices but currently ~15-22s lag
+ *             on Apple Silicon CPU Docker. Native MPS is much faster.
+ */
+export type VoiceEngine = "system" | "kokoro";
+
 export interface Settings {
   voiceId: string;
   micSensitivity: number;
   autoStop: boolean;
   darkMode: boolean;
+  voiceEngine: VoiceEngine;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -17,6 +28,7 @@ const DEFAULT_SETTINGS: Settings = {
   micSensitivity: 75,
   autoStop: true,
   darkMode: true,
+  voiceEngine: "system",
 };
 
 function loadFromStorage(): Settings {

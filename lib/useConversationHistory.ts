@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import type { Conversation } from "@/lib/types";
 
 const STORAGE_KEY = "voiceai-history";
@@ -13,7 +13,7 @@ export interface ConversationHistoryHook {
   hydrated: boolean;
 }
 
-function load(): Conversation[] {
+function loadFromStorage(): Conversation[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -37,31 +37,84 @@ function persist(list: Conversation[]) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
   } catch {
-    // quota or serialization issues — drop silently
+    /* quota — ignore */
   }
 }
 
-export function useConversationHistory(): ConversationHistoryHook {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+let current: Conversation[] = [];
+let hydrated = false;
+const listeners = new Set<() => void>();
 
-  useEffect(() => {
-    setConversations(load());
-    setHydrated(true);
-  }, []);
+function emit() {
+  listeners.forEach((l) => l());
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (!hydrated && typeof window !== "undefined") {
+    current = loadFromStorage();
+    hydrated = true;
+    queueMicrotask(emit);
+  }
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getSnapshot(): Conversation[] {
+  return current;
+}
+
+function getServerSnapshot(): Conversation[] {
+  return [];
+}
+
+function getHydratedSnapshot(): boolean {
+  return hydrated;
+}
+
+function getHydratedServerSnapshot(): boolean {
+  return false;
+}
+
+function setList(next: Conversation[]) {
+  current = next;
+  persist(next);
+  emit();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== STORAGE_KEY) return;
+    current = loadFromStorage();
+    emit();
+  });
+}
+
+export function useConversationHistory(): ConversationHistoryHook {
+  const conversations = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
+  const isHydrated = useSyncExternalStore(
+    subscribe,
+    getHydratedSnapshot,
+    getHydratedServerSnapshot,
+  );
 
   const addConversation = useCallback((c: Conversation) => {
-    setConversations((prev) => {
-      const next = [c, ...prev].slice(0, MAX_CONVERSATIONS);
-      persist(next);
-      return next;
-    });
+    setList([c, ...current].slice(0, MAX_CONVERSATIONS));
   }, []);
 
   const clearHistory = useCallback(() => {
-    setConversations([]);
-    persist([]);
+    setList([]);
   }, []);
 
-  return { conversations, addConversation, clearHistory, hydrated };
+  return {
+    conversations,
+    addConversation,
+    clearHistory,
+    hydrated: isHydrated,
+  };
 }
