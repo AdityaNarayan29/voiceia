@@ -1,8 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Clock, MessageSquare, Trash2, X } from "lucide-react";
+import {
+  Clock,
+  MessageSquare,
+  Plus,
+  Settings as SettingsIcon,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   Sheet,
   SheetClose,
@@ -18,13 +27,18 @@ import { useConversationHistory } from "@/lib/useConversationHistory";
 import type { Conversation } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface HistoryDrawerProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** Called when a row is tapped. Drawer closes automatically. */
+interface HistoryProps {
+  /** Called when a row is tapped. Drawer closes automatically in Sheet mode. */
   onSelect: (conversation: Conversation) => void;
+  /** Called when the "New chat" button is tapped. Drawer closes in Sheet mode. */
+  onNewChat?: () => void;
   /** Highlighted row (current conversation being viewed). */
   activeId?: string | null;
+}
+
+interface HistoryDrawerProps extends HistoryProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 function formatRelative(ts: number): string {
@@ -108,22 +122,38 @@ function ConversationRow({
   );
 }
 
-export function HistoryDrawer({
-  open,
-  onOpenChange,
+interface HistoryBodyProps extends HistoryProps {
+  /** Rendered as the close affordance on mobile; null on desktop rail. */
+  closeButton?: React.ReactNode;
+  /** Persist between mounts so confirm-clear timeout survives. Sheet provides false. */
+  isOpen: boolean;
+}
+
+function HistoryBody({
   onSelect,
+  onNewChat,
   activeId,
-}: HistoryDrawerProps) {
+  closeButton,
+  isOpen,
+}: HistoryBodyProps) {
   const { conversations, clearHistory, hydrated } = useConversationHistory();
+  const pathname = usePathname();
   const [confirmClear, setConfirmClear] = useState(false);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsActive = pathname?.startsWith("/settings") ?? false;
 
   useEffect(() => {
-    if (!open) {
+    if (!isOpen) {
       setConfirmClear(false);
       if (confirmTimer.current) clearTimeout(confirmTimer.current);
     }
-  }, [open]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    };
+  }, []);
 
   const handleClear = useCallback(() => {
     if (!confirmClear) {
@@ -136,6 +166,141 @@ export function HistoryDrawer({
     setConfirmClear(false);
   }, [confirmClear, clearHistory]);
 
+  return (
+    <>
+      <header
+        className="flex items-center justify-between gap-2 px-4 py-4"
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
+      >
+        <Link
+          href="/"
+          aria-label="VoiceAI home"
+          className="group inline-flex items-center gap-2 rounded-md py-1 transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <span
+            aria-hidden
+            className="h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_var(--accent-glow)]"
+          />
+          <span className="font-syne text-base font-bold leading-none tracking-wide text-textPrimary">
+            VoiceAI
+          </span>
+        </Link>
+        {closeButton}
+      </header>
+
+      <div className="px-3 pb-3">
+        <button
+          type="button"
+          onClick={onNewChat}
+          className={cn(
+            "flex h-11 w-full items-center justify-center gap-2 rounded-lg",
+            "border border-accent/30 bg-accent/10 font-geistMono text-xs font-semibold text-accent",
+            "transition-all hover:bg-accent/15 hover:shadow-[0_0_24px_var(--accent-glow)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+            "active:scale-[0.98]",
+          )}
+        >
+          <Plus size={14} aria-hidden />
+          New chat
+        </button>
+      </div>
+
+      <div
+        className="flex items-center justify-between px-4 pb-2 pt-1"
+        aria-hidden
+      >
+        <span className="font-geistMono text-[10px] uppercase tracking-[0.18em] text-textMuted">
+          Conversations
+        </span>
+      </div>
+
+      <ScrollArea className="flex-1 px-3 pb-3">
+        {!hydrated ? (
+          <div className="flex flex-col gap-2 px-1">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className="h-[72px] animate-pulse rounded-lg border border-borderSoft bg-bgCard"
+              />
+            ))}
+          </div>
+        ) : conversations.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-textMuted">
+            <Clock size={28} strokeWidth={1.5} aria-hidden />
+            <p className="font-syne text-sm font-semibold text-textPrimary">
+              No conversations yet
+            </p>
+            <p className="max-w-[16rem] font-geistMono text-[11px] leading-relaxed text-textMuted">
+              Tap the mic, say something, and it&apos;ll show up here.
+            </p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            <AnimatePresence initial={false}>
+              {conversations.map((c) => (
+                <li key={c.id}>
+                  <ConversationRow
+                    c={c}
+                    active={c.id === activeId}
+                    onClick={() => onSelect(c)}
+                  />
+                </li>
+              ))}
+            </AnimatePresence>
+          </ul>
+        )}
+      </ScrollArea>
+
+      {hydrated && conversations.length > 0 && (
+        <div className="px-3 pb-2">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={handleClear}
+            className={cn(
+              "h-10 w-full justify-start gap-2 rounded-lg font-geistMono text-xs",
+              confirmClear
+                ? "bg-error/10 text-error hover:bg-error/15 hover:text-error"
+                : "text-textMuted hover:bg-bgCard hover:text-textPrimary",
+            )}
+          >
+            <Trash2 size={14} aria-hidden />
+            {confirmClear ? "Tap again to confirm" : "Clear all"}
+          </Button>
+        </div>
+      )}
+
+      <div
+        className="border-t border-borderSoft px-3 py-3"
+        style={{
+          paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)",
+        }}
+      >
+        <Link
+          href="/settings"
+          aria-current={settingsActive ? "page" : undefined}
+          className={cn(
+            "flex h-11 w-full items-center gap-2 rounded-lg px-3 font-geistMono text-xs transition-colors",
+            settingsActive
+              ? "bg-accent/10 text-accent"
+              : "text-textPrimary hover:bg-bgCard hover:text-accent",
+          )}
+        >
+          <SettingsIcon size={14} aria-hidden />
+          <span>Settings</span>
+        </Link>
+      </div>
+    </>
+  );
+}
+
+export function HistoryDrawer({
+  open,
+  onOpenChange,
+  onSelect,
+  onNewChat,
+  activeId,
+}: HistoryDrawerProps) {
   const handleSelect = useCallback(
     (c: Conversation) => {
       onSelect(c);
@@ -144,6 +309,11 @@ export function HistoryDrawer({
     [onSelect, onOpenChange],
   );
 
+  const handleNewChat = useCallback(() => {
+    onNewChat?.();
+    onOpenChange(false);
+  }, [onNewChat, onOpenChange]);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -151,94 +321,54 @@ export function HistoryDrawer({
         className={cn(
           "flex w-[84%] max-w-[360px] flex-col gap-0 border-borderSoft bg-bgPrimary p-0",
           "shadow-[0_0_60px_var(--accent-glow)]",
-          // Suppress the built-in absolute close button from shadcn's SheetContent
-          // so we can render a single, header-aligned close instead.
+          // Suppress shadcn's built-in absolute close button.
           "[&>button.absolute]:hidden",
         )}
       >
-        <SheetHeader
-          className="flex flex-row items-center justify-between gap-2 space-y-0 border-b border-borderSoft px-4 py-4 text-left"
-          style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
-        >
-          <div className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_var(--accent-glow)]"
-            />
-            <SheetTitle className="font-syne text-base font-bold leading-none text-textPrimary">
-              Conversations
-            </SheetTitle>
-          </div>
-          <SheetClose
-            aria-label="Close history"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-textMuted transition-colors hover:bg-bgCard hover:text-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            <X size={18} aria-hidden />
-          </SheetClose>
+        <SheetHeader className="sr-only">
+          <SheetTitle>Conversations</SheetTitle>
+          <SheetDescription>
+            Past voice conversations stored on this device.
+          </SheetDescription>
         </SheetHeader>
-        <SheetDescription className="sr-only">
-          Past voice conversations stored on this device.
-        </SheetDescription>
-
-        <ScrollArea className="flex-1 px-3 py-3">
-          {!hydrated ? (
-            <div className="flex flex-col gap-2 px-1">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="h-[72px] animate-pulse rounded-lg border border-borderSoft bg-bgCard"
-                />
-              ))}
-            </div>
-          ) : conversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-textMuted">
-              <Clock size={28} strokeWidth={1.5} aria-hidden />
-              <p className="font-syne text-sm font-semibold text-textPrimary">
-                No conversations yet
-              </p>
-              <p className="max-w-[16rem] font-geistMono text-[11px] leading-relaxed text-textMuted">
-                Tap the mic, say something, and it&apos;ll show up here.
-              </p>
-            </div>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              <AnimatePresence initial={false}>
-                {conversations.map((c) => (
-                  <li key={c.id}>
-                    <ConversationRow
-                      c={c}
-                      active={c.id === activeId}
-                      onClick={() => handleSelect(c)}
-                    />
-                  </li>
-                ))}
-              </AnimatePresence>
-            </ul>
-          )}
-        </ScrollArea>
-
-        {hydrated && conversations.length > 0 && (
-          <div
-            className="border-t border-borderSoft px-3 py-3"
-            style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)" }}
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={handleClear}
-              className={cn(
-                "h-11 w-full justify-start gap-2 rounded-lg font-geistMono text-xs",
-                confirmClear
-                  ? "bg-error/10 text-error hover:bg-error/15 hover:text-error"
-                  : "text-textMuted hover:bg-bgCard hover:text-textPrimary",
-              )}
+        <HistoryBody
+          onSelect={handleSelect}
+          onNewChat={handleNewChat}
+          activeId={activeId}
+          isOpen={open}
+          closeButton={
+            <SheetClose
+              aria-label="Close history"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full text-textMuted transition-colors hover:bg-bgCard hover:text-textPrimary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              <Trash2 size={14} aria-hidden />
-              {confirmClear ? "Tap again to confirm" : "Clear all"}
-            </Button>
-          </div>
-        )}
+              <X size={18} aria-hidden />
+            </SheetClose>
+          }
+        />
       </SheetContent>
     </Sheet>
+  );
+}
+
+/**
+ * Permanent left rail. Visible on lg+ screens only; consumers should hide it on mobile.
+ */
+export function HistorySidebar({
+  onSelect,
+  onNewChat,
+  activeId,
+}: HistoryProps) {
+  return (
+    <aside
+      aria-label="Conversations"
+      className="hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:z-30 lg:w-[300px] lg:flex-col lg:border-r lg:border-borderSoft lg:bg-bgPrimary"
+    >
+      <HistoryBody
+        onSelect={onSelect}
+        onNewChat={onNewChat}
+        activeId={activeId}
+        isOpen
+      />
+    </aside>
   );
 }

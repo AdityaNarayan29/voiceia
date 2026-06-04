@@ -95,6 +95,34 @@ node scripts/generate-icons.mjs
 Writes `public/icons/icon-192.png` and `icon-512.png`. Edit the SVG
 template in `scripts/generate-icons.mjs` to change the icon design.
 
+### PWA: installation and offline status
+
+VoiceAI ships a [manifest.json](public/manifest.json) with name, icons
+(any + maskable), `display: standalone`, and dark theme colors. Chrome's
+install criteria are met, so the **Install** option appears in the URL
+bar after the prod server is running.
+
+Manual install + offline test:
+
+1. `npm run build && npm run start`
+2. Open `http://localhost:3000` in Chrome
+3. Click the install icon in the URL bar (or DevTools → Application → Manifest → Install)
+4. Confirm the app opens as a standalone window with the dark VoiceAI icon
+5. To test offline: install, then DevTools → Network → check "Offline" → reload
+   - You should see the `/offline` page rendered
+
+**Known limitation**: `next-pwa@5.6` generates `/sw.js` correctly but
+does not auto-register it inside Next 14's App Router (the inject
+happens via a pages-router `_app.tsx` workflow that no longer exists
+under App Router). The service worker file is present and Lighthouse
+recognizes the manifest, but actual offline caching is currently inactive.
+
+To re-enable full offline support:
+- Option A: add a small `<script>` to `app/layout.tsx` that calls
+  `navigator.serviceWorker.register('/sw.js')` on load
+- Option B: migrate to [`@serwist/next`](https://serwist.pages.dev/) which
+  is App-Router-native and replaces `next-pwa`
+
 ## Architecture
 
 ```
@@ -131,7 +159,7 @@ No fixed timers in the production path.
 
 1. **Bootstrap** — Next 14 + Tailwind + shadcn (slate), fonts (Syne + Geist Mono), PWA manifest, env wiring.
 2. **Types + state machine** — `VoiceState` reducer, mock voice loop, `Conversation` types.
-3. **Components** — MicButton, Waveform, StatusPill, TranscriptArea, VoiceSelector, BottomNav, HistoryCard.
+3. **Components** — MicButton, Waveform, StatusPill, TranscriptArea, VoiceSelector, HistoryCard, HistoryDrawer/Sidebar.
 4. **Pages + navigation** — Home, History, Settings with framer-motion entry transitions.
 5. **Real STT** — MediaRecorder + Groq Whisper route (OpenAI Whisper fallback). Web Speech API hook is kept but disabled — cross-browser support was too uneven.
 6. **Full loop** — Groq `llama-3.3-70b-versatile` streaming chat (OpenAI `gpt-4o-mini` fallback), Kokoro/OpenAI TTS routes, audio player, persistent history.

@@ -10,9 +10,11 @@ const withPWA = require("next-pwa")({
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    optimizePackageImports: ["lucide-react", "framer-motion"],
-  },
+  // experimental.optimizePackageImports was removed because it conflicts
+  // with next-pwa's precompile pass: the precache manifest references
+  // vendor-chunks that get renamed/removed by the optimization, leading
+  // to "Cannot find module './vendor-chunks/...'" 500s at runtime.
+  // Bundle-size impact is minimal; Next's standard tree-shaking covers it.
 };
 
 module.exports = withPWA(nextConfig);

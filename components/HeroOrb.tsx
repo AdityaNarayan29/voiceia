@@ -1,77 +1,72 @@
 "use client";
 
-import { memo } from "react";
-import { cn } from "@/lib/utils";
+import { memo, useMemo } from "react";
+import dynamic from "next/dynamic";
 
 export type OrbState = "idle" | "listening" | "speaking";
 
 interface HeroOrbProps {
   state: OrbState;
-  /** 0–1, drives ring scale + bar height when listening. */
+  /**
+   * 0–1 demo level. Kept for backward compat with the scripted demo
+   * but unused — the WebGL orb has its own motion and the orb's hue
+   * shift already conveys state.
+   */
   level?: number;
+  /** Total orb size in px. Defaults to 360. */
+  size?: number;
 }
 
-const BAR_WEIGHTS = [0.4, 0.65, 0.8, 1, 0.9, 1, 0.8, 0.65, 0.4];
+/**
+ * WebGL Orb is client-only; ssr:false avoids constructing a Renderer
+ * during server render. Shares the ogl chunk with OrbMicButton.
+ */
+const Orb = dynamic(() => import("@/components/ui/orb"), { ssr: false });
 
-function HeroOrbImpl({ state, level = 0 }: HeroOrbProps) {
-  const reactive = state === "listening";
-  const speaking = state === "speaking";
+/**
+ * Mirrors OrbMicButton's state→visual mapping so the hero and the
+ * in-app mic feel like the same object:
+ *   idle       → hue 30 (warm), passive
+ *   listening  → hue 30 (warm), force-hover ON
+ *   speaking   → hue 210 (calm green), force-hover OFF, low intensity
+ */
+function orbPropsFor(state: OrbState) {
+  switch (state) {
+    case "listening":
+      return {
+        hue: 30,
+        forceHoverState: true,
+        hoverIntensity: 0.3,
+        rotateOnHover: true,
+      };
+    case "speaking":
+      return {
+        hue: 210,
+        forceHoverState: false,
+        hoverIntensity: 0.08,
+        rotateOnHover: false,
+      };
+    case "idle":
+    default:
+      return {
+        hue: 30,
+        forceHoverState: false,
+        hoverIntensity: 0.2,
+        rotateOnHover: true,
+      };
+  }
+}
+
+function HeroOrbImpl({ state, size = 360 }: HeroOrbProps) {
+  const orbProps = useMemo(() => orbPropsFor(state), [state]);
 
   return (
     <div
-      className="relative flex items-center justify-center"
-      style={{ width: 260, height: 260 }}
+      className="relative overflow-hidden rounded-full"
+      style={{ width: size, height: size }}
       aria-hidden
     >
-      <span
-        className={cn(
-          "anim-orbit-slow absolute inset-0 rounded-full border border-accent/15",
-        )}
-        style={{ boxShadow: "0 0 60px var(--accent-glow)" }}
-      />
-      <span className="anim-orbit-slower absolute inset-6 rounded-full border border-accent/10" />
-      <span className="absolute inset-12 rounded-full border border-accent/20" />
-
-      <span
-        className={cn(
-          "absolute inset-16 rounded-full",
-          "bg-gradient-to-b from-accent/20 to-transparent",
-          "anim-accent-pulse",
-        )}
-        style={{
-          filter: "blur(18px)",
-          transform: reactive
-            ? `scale(${1 + level * 0.25})`
-            : speaking
-              ? "scale(1.08)"
-              : undefined,
-          transition: "transform 0.15s ease-out",
-        }}
-      />
-
-      <div className="relative z-10 flex h-24 items-end gap-[6px]">
-        {BAR_WEIGHTS.map((w, i) => {
-          const base = 8;
-          const max = 64;
-          const h = reactive
-            ? base + (max - base) * Math.min(1, level) * w
-            : speaking
-              ? base + (max - base) * w * (0.5 + 0.5 * Math.sin(i))
-              : base + w * 6;
-          return (
-            <span
-              key={i}
-              className="w-[3px] rounded-full bg-accent"
-              style={{
-                height: `${h}px`,
-                opacity: 0.6 + w * 0.4,
-                transition: "height 80ms ease-out",
-                boxShadow: "0 0 12px var(--accent-glow)",
-              }}
-            />
-          );
-        })}
-      </div>
+      <Orb {...orbProps} backgroundColor="#0a0a0f" />
     </div>
   );
 }

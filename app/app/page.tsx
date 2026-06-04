@@ -5,13 +5,12 @@ import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { Menu, Plus, History as HistoryIcon } from "lucide-react";
-import { MicButton } from "@/components/MicButton";
+import { OrbMicButton } from "@/components/OrbMicButton";
 import { Waveform } from "@/components/Waveform";
 import { StatusPill } from "@/components/StatusPill";
 import { VoiceSelector } from "@/components/VoiceSelector";
-import { BottomNav } from "@/components/BottomNav";
 import { MicPermissionSheet } from "@/components/MicPermissionSheet";
-import { HistoryDrawer } from "@/components/HistoryDrawer";
+import { HistoryDrawer, HistorySidebar } from "@/components/HistoryDrawer";
 import { useVoiceState } from "@/lib/useVoiceState";
 import { useConversationHistory } from "@/lib/useConversationHistory";
 import { useNetworkStatus } from "@/lib/useNetworkStatus";
@@ -35,7 +34,7 @@ export default function VoicePage() {
   const [viewing, setViewing] = useState<Conversation | null>(null);
   const [permissionSheetOpen, setPermissionSheetOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const { addConversation } = useConversationHistory();
+  const { conversations, addConversation } = useConversationHistory();
   const { isOnline } = useNetworkStatus();
   const { settings, update, hydrated } = useSettings();
   const voice = hydrated ? settings.voiceId : DEFAULT_VOICE_ID;
@@ -81,6 +80,29 @@ export default function VoicePage() {
     }
   }, [permissionError]);
 
+  // Pick up a conversation chosen from another route (e.g. /settings sidebar)
+  // or honor a "new chat" intent from those pages.
+  useEffect(() => {
+    let id: string | null = null;
+    let newChat = false;
+    try {
+      id = sessionStorage.getItem("voiceai-resume-id");
+      newChat = sessionStorage.getItem("voiceai-new-chat") === "1";
+      if (id) sessionStorage.removeItem("voiceai-resume-id");
+      if (newChat) sessionStorage.removeItem("voiceai-new-chat");
+    } catch {
+      return;
+    }
+    if (newChat) {
+      setViewing(null);
+      setLiveMessages([]);
+      return;
+    }
+    if (!id || !conversations.length) return;
+    const match = conversations.find((c) => c.id === id);
+    if (match) setViewing(match);
+  }, [conversations]);
+
   const openHistory = useCallback(() => setHistoryOpen(true), []);
   useEdgeSwipe({
     edge: "left",
@@ -94,6 +116,11 @@ export default function VoicePage() {
 
   const handleBackToLive = useCallback(() => {
     setViewing(null);
+  }, []);
+
+  const handleNewChat = useCallback(() => {
+    setViewing(null);
+    setLiveMessages([]);
   }, []);
 
   const handleMicPress = useCallback(() => {
@@ -139,8 +166,14 @@ export default function VoicePage() {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="flex h-[100dvh] flex-col overflow-hidden"
+      className="flex h-[100dvh] flex-col overflow-hidden lg:ml-[300px]"
     >
+      <h1 className="sr-only">VoiceAI — Talk to AI</h1>
+      <HistorySidebar
+        onSelect={handleSelectConversation}
+        onNewChat={handleNewChat}
+        activeId={viewing?.id ?? null}
+      />
       {!isOnline && (
         <div
           role="alert"
@@ -160,7 +193,7 @@ export default function VoicePage() {
           aria-label="Open conversation history"
           aria-expanded={historyOpen}
           aria-controls="history-drawer"
-          className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-borderSoft bg-bgCard text-textPrimary transition-colors hover:border-accent/30 hover:text-accent"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-borderSoft bg-bgCard text-textPrimary transition-colors hover:border-accent/30 hover:text-accent lg:hidden"
         >
           <Menu size={20} aria-hidden />
         </button>
@@ -204,7 +237,7 @@ export default function VoicePage() {
 
       <section className="flex flex-1 flex-col items-center justify-center gap-8 px-4">
         <Waveform state={state} level={micLevel} />
-        <MicButton
+        <OrbMicButton
           state={state}
           onClick={handleMicPress}
           disabled={!isOnline && state === "idle"}
@@ -219,9 +252,6 @@ export default function VoicePage() {
         />
       </section>
 
-      <div className="pb-[80px]" />
-      <BottomNav />
-
       <MicPermissionSheet
         open={permissionSheetOpen}
         onOpenChange={setPermissionSheetOpen}
@@ -231,6 +261,7 @@ export default function VoicePage() {
         open={historyOpen}
         onOpenChange={setHistoryOpen}
         onSelect={handleSelectConversation}
+        onNewChat={handleNewChat}
         activeId={viewing?.id ?? null}
       />
     </motion.main>

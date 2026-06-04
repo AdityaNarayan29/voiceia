@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { HistorySidebar } from "@/components/HistoryDrawer";
+import type { Conversation } from "@/lib/types";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
@@ -17,7 +20,6 @@ import {
 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { BottomNav } from "@/components/BottomNav";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { MicLevelMeter } from "@/components/MicLevelMeter";
 import { VOICES } from "@/lib/constants";
@@ -84,6 +86,29 @@ function ControlRow({
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
+  const handleHistorySelect = useCallback(
+    (c: Conversation) => {
+      try {
+        sessionStorage.setItem("voiceai-resume-id", c.id);
+      } catch {
+        /* ignore */
+      }
+      router.push("/app");
+    },
+    [router],
+  );
+
+  const handleNewChat = useCallback(() => {
+    try {
+      sessionStorage.setItem("voiceai-new-chat", "1");
+      sessionStorage.removeItem("voiceai-resume-id");
+    } catch {
+      /* ignore */
+    }
+    router.push("/app");
+  }, [router]);
+
   const { settings, update, hydrated } = useSettings();
   const streamingPlayer = useStreamingAudioPlayer();
   const recorder = useAudioRecorder();
@@ -190,9 +215,14 @@ export default function SettingsPage() {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="min-h-[100dvh] pb-[100px]"
+      className="min-h-[100dvh] pb-12 lg:ml-[300px]"
       style={{ paddingTop: "calc(env(safe-area-inset-top) + 1.5rem)" }}
     >
+      <HistorySidebar
+        onSelect={handleHistorySelect}
+        onNewChat={handleNewChat}
+        activeId={null}
+      />
       <div className="mx-auto w-full max-w-md px-4 sm:max-w-2xl lg:max-w-5xl lg:px-6">
         <header className="mb-6">
           <h1 className="font-syne text-2xl font-bold text-textPrimary sm:text-3xl">
@@ -487,7 +517,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <BottomNav />
     </motion.main>
   );
 }

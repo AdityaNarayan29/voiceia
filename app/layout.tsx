@@ -37,6 +37,10 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // SSR default — matches the dark palette in globals.css. ThemeProvider
+  // overrides this client-side when the user switches to light mode.
+  // Defining it here makes Lighthouse's "has theme color meta" check pass.
+  themeColor: "#0a0a0f",
 };
 
 export default function RootLayout({

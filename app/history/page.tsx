@@ -1,21 +1,53 @@
 "use client";
 
+import { useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Clock } from "lucide-react";
 import { HistoryCard } from "@/components/HistoryCard";
-import { BottomNav } from "@/components/BottomNav";
+import { HistorySidebar } from "@/components/HistoryDrawer";
 import { useConversationHistory } from "@/lib/useConversationHistory";
+import type { Conversation } from "@/lib/types";
 
 export default function HistoryPage() {
   const { conversations, clearHistory, hydrated } = useConversationHistory();
+  const router = useRouter();
+
+  const handleSelect = useCallback(
+    (c: Conversation) => {
+      try {
+        sessionStorage.setItem("voiceai-resume-id", c.id);
+      } catch {
+        /* ignore */
+      }
+      router.push("/app");
+    },
+    [router],
+  );
+
+  const handleNewChat = useCallback(() => {
+    try {
+      sessionStorage.setItem("voiceai-new-chat", "1");
+      sessionStorage.removeItem("voiceai-resume-id");
+    } catch {
+      /* ignore */
+    }
+    router.push("/app");
+  }, [router]);
 
   return (
     <motion.main
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
-      className="min-h-[100dvh]"
+      className="min-h-[100dvh] lg:ml-[300px]"
     >
+      <HistorySidebar
+        onSelect={handleSelect}
+        onNewChat={handleNewChat}
+        activeId={null}
+      />
+
       <header
         className="flex items-center justify-between px-4 pt-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
@@ -34,7 +66,7 @@ export default function HistoryPage() {
         )}
       </header>
 
-      <section className="flex flex-col gap-3 px-4 pb-[100px] pt-4">
+      <section className="flex flex-col gap-3 px-4 pb-12 pt-4">
         {hydrated && conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center gap-2 py-20 text-textMuted">
             <Clock size={32} strokeWidth={1.5} />
@@ -51,8 +83,6 @@ export default function HistoryPage() {
           ))
         )}
       </section>
-
-      <BottomNav />
     </motion.main>
   );
 }

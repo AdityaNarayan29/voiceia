@@ -8,6 +8,7 @@ import { useAudioPlayer } from "@/lib/useAudioPlayer";
 import { useSpeechSynthesis } from "@/lib/useSpeechSynthesis";
 import { useStreamingAudioPlayer } from "@/lib/useStreamingAudioPlayer";
 import { isKokoroConfigured, kokoroSpeak } from "@/lib/kokoroClient";
+import { classifyError } from "@/lib/errorMessages";
 
 const initialState: VoiceStateShape = {
   state: "idle",
@@ -163,14 +164,14 @@ export function useVoiceState(options: UseVoiceStateOptions) {
         });
       } catch (e) {
         if (controller.signal.aborted) return;
-        reportError(e instanceof Error ? e.message : "chat request failed");
+        reportError(classifyError(e).title);
         dispatch({ type: "RESET" });
         return;
       }
 
       if (!chatRes.ok || !chatRes.body) {
         const text = await chatRes.text().catch(() => "");
-        reportError(`chat failed: ${text.slice(0, 120) || chatRes.status}`);
+        reportError(classifyError(text || `HTTP ${chatRes.status}`).title);
         dispatch({ type: "RESET" });
         return;
       }
@@ -192,14 +193,14 @@ export function useVoiceState(options: UseVoiceStateOptions) {
           dispatch({ type: "SET_RESPONSE", payload: accumulated });
         }
       } catch (e) {
-        reportError(e instanceof Error ? e.message : "stream read failed");
+        reportError(classifyError(e).title);
         dispatch({ type: "RESET" });
         return;
       }
 
       const finalResponse = accumulated.trim();
       if (!finalResponse) {
-        reportError("empty response from chat");
+        reportError("Voice service hiccup");
         dispatch({ type: "RESET" });
         return;
       }
@@ -293,15 +294,18 @@ export function useVoiceState(options: UseVoiceStateOptions) {
   useEffect(() => {
     const err = speech.error || recorder.error;
     if (!err) return;
-    const lower = err.toLowerCase();
-    if (
-      lower.includes("not-allowed") ||
-      lower.includes("permission") ||
-      lower.includes("denied")
-    ) {
+    const friendly = classifyError(err);
+    if (friendly.isPermissionIssue) {
       setPermissionError(true);
+      return;
     }
-  }, [speech.error, recorder.error]);
+    // Non-permission speech/recorder errors are worth surfacing too,
+    // but as a toast rather than the big sheet. "no-speech" is normal,
+    // not worth bothering the user.
+    if (friendly.category !== "no-speech" && friendly.category !== "unknown") {
+      reportError(friendly.title);
+    }
+  }, [speech.error, recorder.error, reportError]);
 
   const stopListeningRef = useRef<() => Promise<void>>(async () => {});
 
@@ -410,14 +414,14 @@ export function useVoiceState(options: UseVoiceStateOptions) {
       });
     } catch (e) {
       if (controller.signal.aborted) return;
-      reportError(e instanceof Error ? e.message : "transcribe request failed");
+      reportError(classifyError(e).title);
       dispatch({ type: "RESET" });
       return;
     }
 
     if (!transcribeRes.ok) {
       const text = await transcribeRes.text().catch(() => "");
-      reportError(`transcribe failed: ${text.slice(0, 120) || transcribeRes.status}`);
+      reportError(classifyError(text || `HTTP ${transcribeRes.status}`).title);
       dispatch({ type: "RESET" });
       return;
     }

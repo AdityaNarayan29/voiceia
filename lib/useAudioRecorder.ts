@@ -197,12 +197,11 @@ export function useAudioRecorder(): AudioRecorderHook {
         };
         rafRef.current = requestAnimationFrame(tick);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "failed to start recording";
-        setError(
-          msg.includes("Permission") || msg.includes("NotAllowed")
-            ? "microphone permission denied"
-            : msg,
-        );
+        // Preserve the raw error string so classifyError() in useVoiceState
+        // can do the friendly translation. The recorder hook stays
+        // browser-agnostic.
+        const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        setError(msg);
         cleanupStream();
       }
     },
