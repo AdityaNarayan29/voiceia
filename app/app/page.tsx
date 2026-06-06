@@ -1,13 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
-import { Menu, Plus, History as HistoryIcon } from "lucide-react";
+import { Menu, Plus, History as HistoryIcon, Square } from "lucide-react";
 import { OrbMicButton } from "@/components/OrbMicButton";
-import { Waveform } from "@/components/Waveform";
-import { StatusPill } from "@/components/StatusPill";
 import { VoiceSelector } from "@/components/VoiceSelector";
 import { MicPermissionSheet } from "@/components/MicPermissionSheet";
 import { HistoryDrawer, HistorySidebar } from "@/components/HistoryDrawer";
@@ -17,6 +15,7 @@ import { useNetworkStatus } from "@/lib/useNetworkStatus";
 import { useSettings } from "@/lib/useSettings";
 import { useEdgeSwipe } from "@/lib/useEdgeSwipe";
 import { DEFAULT_VOICE_ID } from "@/lib/constants";
+import { cn } from "@/lib/utils";
 import type { Conversation, Message } from "@/lib/types";
 
 const TranscriptArea = dynamic(
@@ -56,15 +55,28 @@ export default function VoicePage() {
     toast.error(message);
   }, []);
 
+  // Refs let onCycleEnd read the latest settings/startListening without
+  // re-wiring the voice state machine on every render.
+  const startListeningRef = useRef<() => void>(() => {});
+  const handsFreeRef = useRef(false);
+  handsFreeRef.current = hydrated ? settings.handsFree : false;
+
+  const handleCycleEnd = useCallback(() => {
+    if (!handsFreeRef.current) return;
+    if (!isOnline) return;
+    // Defer so the orb visibly returns to idle before kicking back to listening.
+    setTimeout(() => startListeningRef.current(), 250);
+  }, [isOnline]);
+
   const {
     state,
     transcript,
     interimTranscript,
     aiResponse,
     permissionError,
-    micLevel,
     startListening,
     stopListening,
+    reset,
   } = useVoiceState({
     voiceId: voice,
     micSensitivity: settings.micSensitivity,
@@ -72,7 +84,10 @@ export default function VoicePage() {
     voiceEngine: settings.voiceEngine,
     onConversationComplete: handleConversationComplete,
     onError: handleError,
+    onCycleEnd: handleCycleEnd,
   });
+
+  startListeningRef.current = startListening;
 
   useEffect(() => {
     if (permissionError) {
@@ -132,7 +147,8 @@ export default function VoicePage() {
     if (viewing) setViewing(null);
     if (state === "idle") startListening();
     else if (state === "listening") stopListening();
-  }, [isOnline, state, startListening, stopListening, viewing]);
+    else if (state === "processing" || state === "speaking") reset();
+  }, [isOnline, state, startListening, stopListening, reset, viewing]);
 
   const displayMessages = useMemo<Message[]>(() => {
     // When viewing a past chat, show only its messages (read-only).
@@ -235,14 +251,64 @@ export default function VoicePage() {
         )}
       </AnimatePresence>
 
-      <section className="flex flex-1 flex-col items-center justify-center gap-8 px-4">
-        <Waveform state={state} level={micLevel} />
+      {/* Orb + status label + stop pill. Label always present so the
+          user can tell which phase they're in without reading orb hue. */}
+      <section className="flex flex-1 flex-col items-center justify-center gap-3 px-4">
         <OrbMicButton
           state={state}
           onClick={handleMicPress}
           disabled={!isOnline && state === "idle"}
         />
-        <StatusPill state={state} />
+        <p
+          role="status"
+          aria-live="polite"
+          className={cn(
+            "font-geistMono text-[11px] uppercase tracking-[0.22em] transition-colors",
+            state === "listening" && "text-accent",
+            state === "processing" && "text-textMuted",
+            state === "speaking" && "text-success",
+            state === "idle" && "text-textMuted",
+          )}
+        >
+          <span className="inline-flex items-center gap-2">
+            <span
+              aria-hidden
+              className={cn(
+                "h-1.5 w-1.5 rounded-full",
+                state === "listening" && "animate-pulse bg-accent shadow-[0_0_8px_var(--accent-glow)]",
+                state === "processing" && "animate-pulse bg-textMuted",
+                state === "speaking" && "bg-success shadow-[0_0_8px_rgba(0,255,136,0.4)]",
+                state === "idle" && "bg-textMuted/40",
+              )}
+            />
+            {state === "idle" && "Tap to talk"}
+            {state === "listening" && "Listening"}
+            {state === "processing" && "Thinking"}
+            {state === "speaking" && "Speaking"}
+          </span>
+        </p>
+        <AnimatePresence initial={false}>
+          {(state === "processing" || state === "speaking") && (
+            <motion.button
+              key="stop-pill"
+              type="button"
+              onClick={reset}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              aria-label={
+                state === "speaking"
+                  ? "Stop speaking"
+                  : "Cancel response"
+              }
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-borderSoft bg-bgCard px-5 font-geistMono text-xs text-textPrimary transition-colors hover:border-error/40 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bgPrimary"
+            >
+              <Square size={12} aria-hidden fill="currentColor" />
+              {state === "speaking" ? "Stop" : "Cancel"}
+            </motion.button>
+          )}
+        </AnimatePresence>
       </section>
 
       <section className="px-4 pb-2">

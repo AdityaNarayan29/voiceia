@@ -48,6 +48,8 @@ export interface UseVoiceStateOptions {
   voiceEngine?: "system" | "kokoro";
   onConversationComplete?: (conversation: Conversation) => void;
   onError?: (message: string) => void;
+  /** Fires after a turn ends naturally (TTS done). Not called on cancel/error. */
+  onCycleEnd?: () => void;
 }
 
 function newId(prefix: string): string {
@@ -62,6 +64,7 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     voiceEngine = "system",
     onConversationComplete,
     onError,
+    onCycleEnd,
   } = options;
 
   const [voice, dispatch] = useReducer(reducer, initialState);
@@ -79,14 +82,14 @@ export function useVoiceState(options: UseVoiceStateOptions) {
   const sensitivityRef = useRef(micSensitivity);
   const autoStopRef = useRef(autoStop);
   const voiceEngineRef = useRef(voiceEngine);
-  const optionsRef = useRef({ onConversationComplete, onError });
+  const optionsRef = useRef({ onConversationComplete, onError, onCycleEnd });
 
   stateRef.current = voice.state;
   voiceIdRef.current = voiceId;
   sensitivityRef.current = micSensitivity;
   autoStopRef.current = autoStop;
   voiceEngineRef.current = voiceEngine;
-  optionsRef.current = { onConversationComplete, onError };
+  optionsRef.current = { onConversationComplete, onError, onCycleEnd };
 
   const speech = useSpeechRecognition();
   const recorder = useAudioRecorder();
@@ -208,9 +211,11 @@ export function useVoiceState(options: UseVoiceStateOptions) {
 
       // STEP 2: TTS — engine choice driven by Settings.
       const finishCycle = () => {
+        if (cancelledRef.current) return;
         completeConversation(transcript, finalResponse);
         dispatch({ type: "RESET" });
         finalSeenRef.current = "";
+        optionsRef.current.onCycleEnd?.();
       };
 
       const playWithSynth = () => {
@@ -445,6 +450,17 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     partialAbortRef.current?.abort();
     partialAbortRef.current = null;
     partialInFlightRef.current = false;
+    // Preserve the partial turn: if the user said something this cycle, save
+    // it (along with whatever of the reply streamed in) so cancel acts as
+    // "stop", not "discard". Drop turns with no user transcript yet.
+    const partialUser = voice.transcript.trim();
+    const partialAi = voice.aiResponse.trim();
+    if (partialUser) {
+      completeConversation(
+        partialUser,
+        partialAi || "(response canceled)",
+      );
+    }
     finalSeenRef.current = "";
     setPermissionError(false);
     setLiveTranscript("");
@@ -453,7 +469,7 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     synth.stop();
     streamingPlayer.stop();
     dispatch({ type: "RESET" });
-  }, [speech, player, synth, streamingPlayer]);
+  }, [speech, player, synth, streamingPlayer, voice.transcript, voice.aiResponse, completeConversation]);
 
   // Unmount-only cleanup. Empty deps + ref reads = runs exactly once on unmount.
   // (Previously had `[player]` which re-fired every render because useAudioPlayer's

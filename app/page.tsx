@@ -177,10 +177,10 @@ export default function LandingPage() {
         className="pointer-events-none fixed inset-0 z-0 motion-reduce:hidden"
       >
         <Ferrofluid
-          // Component defaults from react-bits: white ferrofluid on dark
-          // bg, cursor magnet on, speed 0.5, scale 1.6, turbulence 1,
-          // fluidity 0.1, rim 0.2, sharpness 2.5, shimmer 1.5, glow 2.
-          // All props omitted so the component's defaults apply.
+          // Component defaults from react-bits, except glow halved (default
+          // 2 → 1) so the white trails don't bloom too brightly behind hero
+          // text on the dark bg.
+          glow={1}
         />
       </div>
       {/*

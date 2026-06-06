@@ -23,39 +23,38 @@ interface OrbMicButtonProps {
 const A11Y_LABELS: Record<VoiceState, string> = {
   idle: "Start listening",
   listening: "Stop listening",
-  processing: "Processing your message",
-  speaking: "AI is speaking",
+  processing: "Cancel response",
+  speaking: "Stop speaking",
 };
 
 /**
- * State → orb visuals, kept in lockstep with the Waveform's color logic:
- *   idle       → hue 30 (warm), passive (no force-hover)
- *   listening  → hue 30 (warm), force-hover ON  (user is speaking — warm = "you")
- *   processing → hue 69 (yellow-green "thinking"), force-hover ON
- *   speaking   → hue 210 (calm green, matches waveform's success bar), force-hover OFF, low intensity
+ * State → orb visuals. Each state has a distinct hue so you can tell
+ * them apart from the orb alone (no waveform / status pill anymore).
  *
- * Speaking deliberately drops force-hover and rotation so the orb settles
- * into a gentle ambient state — matching the Waveform's slower 1.1s pulse.
+ *   idle       → hue 30  (warm orange — passive)
+ *   listening  → hue 200 (cyan — matches the accent, "I hear you")
+ *   processing → hue 280 (purple — "thinking")
+ *   speaking   → hue 69  (yellow-green — "AI talking back")
  */
 function orbPropsFor(state: VoiceState) {
   switch (state) {
     case "listening":
       return {
-        hue: 30,
+        hue: 200,
         forceHoverState: true,
         hoverIntensity: 0.3,
         rotateOnHover: true,
       };
     case "processing":
       return {
-        hue: 69,
+        hue: 280,
         forceHoverState: true,
         hoverIntensity: 0.22,
         rotateOnHover: true,
       };
     case "speaking":
       return {
-        hue: 210,
+        hue: 69,
         forceHoverState: false,
         hoverIntensity: 0.08,
         rotateOnHover: false,
@@ -105,50 +104,32 @@ export function OrbMicButton({
       style={{ width: size, height: size }}
       className={cn(
         "group relative inline-flex items-center justify-center rounded-full",
-        "transition-[box-shadow,transform] duration-300 ease-out",
+        "transition-transform duration-300 ease-out",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-4 focus-visible:ring-offset-bgPrimary",
         "disabled:cursor-not-allowed disabled:opacity-50",
         "active:scale-[0.97]",
-        // State-aligned outer glow — matches Waveform palette
-        isListening && "shadow-[0_0_36px_var(--accent-glow)]",
-        isProcessing &&
-          "shadow-[0_0_44px_color-mix(in_oklab,var(--warning)_50%,transparent)]",
-        isSpeaking &&
-          "shadow-[0_0_32px_color-mix(in_oklab,var(--success)_40%,transparent)]",
+        // No state-based box-shadow halo — matches HeroOrb on landing,
+        // which has no outer glow. Orb's own animation conveys state.
       )}
     >
-      {/* WebGL orb canvas fills the button */}
+      {/* WebGL orb canvas fills the button — same as HeroOrb */}
       <span className="absolute inset-0 overflow-hidden rounded-full">
         <Orb {...orbProps} backgroundColor="#0a0a0f" />
       </span>
 
-      {/* Soft inner glass to give the mic icon contrast */}
+      {/* Soft inner glass to give the mic icon contrast.
+          Kept because this is a button (the icon needs legibility).
+          HeroOrb has no icon so doesn't need this. */}
       <span
         aria-hidden
         className="pointer-events-none absolute inset-[18%] rounded-full bg-bgPrimary/30 backdrop-blur-[2px]"
       />
 
-      {/* Mic icon — sits on top of the orb */}
+      {/* Mic icon — neutral color across all states, no per-state
+          drop-shadow flash. Orb hue does the state signaling. */}
       <span
         aria-hidden
-        className={cn(
-          "pointer-events-none relative z-10 inline-flex items-center justify-center",
-          "transition-colors duration-300",
-          isProcessing
-            ? "text-warning"
-            : isSpeaking
-              ? "text-success"
-              : "text-textPrimary",
-        )}
-        style={{
-          filter: isListening
-            ? "drop-shadow(0 0 12px var(--accent))"
-            : isProcessing
-              ? "drop-shadow(0 0 10px color-mix(in oklab, var(--warning) 70%, transparent))"
-              : isSpeaking
-                ? "drop-shadow(0 0 10px color-mix(in oklab, var(--success) 60%, transparent))"
-                : undefined,
-        }}
+        className="pointer-events-none relative z-10 inline-flex items-center justify-center text-textPrimary"
       >
         <Mic
           size={Math.round(size * 0.28)}

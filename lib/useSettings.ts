@@ -21,6 +21,7 @@ export interface Settings {
   autoStop: boolean;
   darkMode: boolean;
   voiceEngine: VoiceEngine;
+  handsFree: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +30,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoStop: true,
   darkMode: true,
   voiceEngine: "system",
+  handsFree: true,
 };
 
 function loadFromStorage(): Settings {

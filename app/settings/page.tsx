@@ -223,7 +223,7 @@ export default function SettingsPage() {
         onNewChat={handleNewChat}
         activeId={null}
       />
-      <div className="mx-auto w-full max-w-md px-4 sm:max-w-2xl lg:max-w-5xl lg:px-6">
+      <div className="mx-auto w-full max-w-md px-4 sm:max-w-xl lg:max-w-2xl lg:px-6">
         <header className="mb-6">
           <h1 className="font-syne text-2xl font-bold text-textPrimary sm:text-3xl">
             Settings
@@ -233,9 +233,9 @@ export default function SettingsPage() {
           </p>
         </header>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-5">
+        <div className="grid grid-cols-1 gap-4 lg:gap-5">
 
-        <div className="lg:col-span-2">
+        <div>
           <SectionCard title="Voice" icon={Volume2}>
           <p className="mb-3 font-geistMono text-[11px] text-textMuted">
             Choose the voice for previews. Chat uses your system voice.
@@ -243,7 +243,7 @@ export default function SettingsPage() {
           <div
             role="radiogroup"
             aria-label="Default voice"
-            className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"
+            className="grid grid-cols-2 gap-2 sm:grid-cols-3"
           >
             {VOICES.map((voice) => {
               const selected = settings.voiceId === voice.id;
@@ -467,6 +467,19 @@ export default function SettingsPage() {
                 <Switch
                   checked={settings.autoStop}
                   onCheckedChange={(v) => update("autoStop", v)}
+                  disabled={!hydrated}
+                />
+              </ControlRow>
+            </div>
+
+            <div className="border-t border-borderSoft pt-3">
+              <ControlRow
+                label="Hands-free mode"
+                hint="Auto-start listening after the AI finishes speaking"
+              >
+                <Switch
+                  checked={settings.handsFree}
+                  onCheckedChange={(v) => update("handsFree", v)}
                   disabled={!hydrated}
                 />
               </ControlRow>
