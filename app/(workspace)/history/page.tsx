@@ -1,54 +1,25 @@
 "use client";
 
-import { useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
 import { Clock } from "lucide-react";
 import { HistoryCard } from "@/components/HistoryCard";
-import { HistorySidebar } from "@/components/HistoryDrawer";
 import { useConversationHistory } from "@/lib/useConversationHistory";
-import type { Conversation } from "@/lib/types";
+import { useGsapReveal } from "@/lib/useGsapReveal";
 
 export default function HistoryPage() {
   const { conversations, clearHistory, hydrated } = useConversationHistory();
-  const router = useRouter();
 
-  const handleSelect = useCallback(
-    (c: Conversation) => {
-      try {
-        sessionStorage.setItem("voiceai-resume-id", c.id);
-      } catch {
-        /* ignore */
-      }
-      router.push("/app");
-    },
-    [router],
-  );
-
-  const handleNewChat = useCallback(() => {
-    try {
-      sessionStorage.setItem("voiceai-new-chat", "1");
-      sessionStorage.removeItem("voiceai-resume-id");
-    } catch {
-      /* ignore */
-    }
-    router.push("/app");
-  }, [router]);
+  const revealRef = useGsapReveal<HTMLDivElement>({
+    y: 14,
+    stagger: 0.05,
+    duration: 0.5,
+    enabled: hydrated,
+    deps: [conversations.length, hydrated],
+  });
 
   return (
-    <motion.main
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className="min-h-[100dvh] lg:ml-[300px]"
-    >
-      <HistorySidebar
-        onSelect={handleSelect}
-        onNewChat={handleNewChat}
-        activeId={null}
-      />
-
+    <main ref={revealRef} className="min-h-[100dvh]">
       <header
+        data-reveal
         className="flex items-center justify-between px-4 pt-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
       >
@@ -68,7 +39,10 @@ export default function HistoryPage() {
 
       <section className="flex flex-col gap-3 px-4 pb-12 pt-4">
         {hydrated && conversations.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-20 text-textMuted">
+          <div
+            data-reveal
+            className="flex flex-col items-center justify-center gap-2 py-20 text-textMuted"
+          >
             <Clock size={32} strokeWidth={1.5} />
             <p className="font-syne text-base font-semibold text-textPrimary">
               No conversations yet
@@ -79,10 +53,12 @@ export default function HistoryPage() {
           </div>
         ) : (
           conversations.map((c) => (
-            <HistoryCard key={c.id} conversation={c} />
+            <div key={c.id} data-reveal>
+              <HistoryCard conversation={c} />
+            </div>
           ))
         )}
       </section>
-    </motion.main>
+    </main>
   );
 }

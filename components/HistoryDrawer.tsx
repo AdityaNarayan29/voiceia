@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import gsap from "gsap";
 import {
   Clock,
   MessageSquare,
@@ -72,26 +73,28 @@ function ConversationRow({
   return (
     <motion.button
       type="button"
-      layout
+      layout="position"
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: -8 }}
-      transition={{ duration: 0.18 }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       whileTap={{ scale: 0.98 }}
       onClick={onClick}
       aria-current={active ? "true" : undefined}
       className={cn(
         "group relative flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left",
-        "transition-colors",
+        "transition-[background-color,border-color,box-shadow] duration-200",
         active
-          ? "border-accent/40 bg-accent/10"
+          ? "border-accent/40 bg-accent/10 shadow-[0_0_16px_var(--accent-glow)]"
           : "border-borderSoft bg-bgCard hover:border-accent/30 hover:bg-accent/5",
       )}
     >
       {active && (
-        <span
+        <motion.span
+          layoutId="conversation-active-rail"
           aria-hidden
           className="absolute left-0 top-2 h-[calc(100%-1rem)] w-[3px] rounded-r-full bg-accent shadow-[0_0_10px_var(--accent-glow)]"
+          transition={{ type: "spring", stiffness: 380, damping: 32 }}
         />
       )}
       <div
@@ -142,6 +145,35 @@ function HistoryBody({
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsActive = pathname?.startsWith("/settings") ?? false;
 
+  // GSAP first-mount reveal: slide the sidebar's primary sections in
+  // with a tight stagger. Runs once per mount of this body, NOT on every
+  // route change (since the body itself is owned by WorkspaceShell and
+  // stays mounted).
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!bodyRef.current) return;
+    if (typeof window === "undefined") return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const targets =
+      bodyRef.current.querySelectorAll<HTMLElement>("[data-sidebar-reveal]");
+    if (!targets.length) return;
+    const ctx = gsap.context(() => {
+      gsap.fromTo(
+        targets,
+        { opacity: 0, x: -10 },
+        {
+          opacity: 1,
+          x: 0,
+          duration: 0.45,
+          stagger: 0.06,
+          ease: "power3.out",
+          clearProps: "transform,opacity,willChange",
+        },
+      );
+    }, bodyRef.current);
+    return () => ctx.revert();
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
       setConfirmClear(false);
@@ -167,8 +199,9 @@ function HistoryBody({
   }, [confirmClear, clearHistory]);
 
   return (
-    <>
+    <div ref={bodyRef} className="flex h-full min-h-0 flex-col">
       <header
+        data-sidebar-reveal
         className="flex items-center justify-between gap-2 px-4 py-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
       >
@@ -179,7 +212,7 @@ function HistoryBody({
         >
           <span
             aria-hidden
-            className="h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_var(--accent-glow)]"
+            className="anim-accent-pulse h-2 w-2 rounded-full bg-accent shadow-[0_0_10px_var(--accent-glow)]"
           />
           <span className="font-syne text-base font-bold leading-none tracking-wide text-textPrimary">
             VoiceAI
@@ -188,14 +221,14 @@ function HistoryBody({
         {closeButton}
       </header>
 
-      <div className="px-3 pb-3">
+      <div data-sidebar-reveal className="px-3 pb-3">
         <button
           type="button"
           onClick={onNewChat}
           className={cn(
             "flex h-11 w-full items-center justify-center gap-2 rounded-lg",
             "border border-accent/30 bg-accent/10 font-geistMono text-xs font-semibold text-accent",
-            "transition-all hover:bg-accent/15 hover:shadow-[0_0_24px_var(--accent-glow)]",
+            "transition-all duration-200 hover:bg-accent/15 hover:shadow-[0_0_24px_var(--accent-glow)]",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
             "active:scale-[0.98]",
           )}
@@ -206,6 +239,7 @@ function HistoryBody({
       </div>
 
       <div
+        data-sidebar-reveal
         className="flex items-center justify-between px-4 pb-2 pt-1"
         aria-hidden
       >
@@ -214,7 +248,7 @@ function HistoryBody({
         </span>
       </div>
 
-      <ScrollArea className="flex-1 px-3 pb-3">
+      <ScrollArea data-sidebar-reveal className="flex-1 px-3 pb-3">
         {!hydrated ? (
           <div className="flex flex-col gap-2 px-1">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -271,6 +305,7 @@ function HistoryBody({
       )}
 
       <div
+        data-sidebar-reveal
         className="border-t border-borderSoft px-3 py-3"
         style={{
           paddingBottom: "calc(env(safe-area-inset-bottom) + 0.75rem)",
@@ -280,17 +315,29 @@ function HistoryBody({
           href="/settings"
           aria-current={settingsActive ? "page" : undefined}
           className={cn(
-            "flex h-11 w-full items-center gap-2 rounded-lg px-3 font-geistMono text-xs transition-colors",
+            "group relative flex h-11 w-full items-center gap-2 overflow-hidden rounded-lg px-3 font-geistMono text-xs transition-colors",
             settingsActive
               ? "bg-accent/10 text-accent"
               : "text-textPrimary hover:bg-bgCard hover:text-accent",
           )}
         >
-          <SettingsIcon size={14} aria-hidden />
+          {settingsActive && (
+            <motion.span
+              layoutId="nav-active-rail"
+              aria-hidden
+              className="absolute left-0 top-1.5 h-[calc(100%-0.75rem)] w-[3px] rounded-r-full bg-accent shadow-[0_0_10px_var(--accent-glow)]"
+              transition={{ type: "spring", stiffness: 380, damping: 32 }}
+            />
+          )}
+          <SettingsIcon
+            size={14}
+            aria-hidden
+            className="transition-transform duration-200 group-hover:rotate-45"
+          />
           <span>Settings</span>
         </Link>
       </div>
-    </>
+    </div>
   );
 }
 

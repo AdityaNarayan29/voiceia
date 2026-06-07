@@ -203,6 +203,25 @@ export default function Orb({
     }
   `;
 
+  // Hold the latest prop values in refs so the WebGL init effect can run
+  // ONCE on mount. State changes that update hue/hover/etc. just mutate
+  // the refs, and the RAF loop reads them every frame — no renderer
+  // teardown, no canvas remount, no flicker.
+  const propsRef = useRef({
+    hue,
+    hoverIntensity,
+    rotateOnHover,
+    forceHoverState,
+    backgroundColor,
+  });
+  propsRef.current = {
+    hue,
+    hoverIntensity,
+    rotateOnHover,
+    forceHoverState,
+    backgroundColor,
+  };
+
   useEffect(() => {
     const container = ctnDom.current;
     if (!container) return;
@@ -212,6 +231,7 @@ export default function Orb({
     gl.clearColor(0, 0, 0, 0);
     container.appendChild(gl.canvas);
 
+    const initial = propsRef.current;
     const geometry = new Triangle(gl);
     const program = new Program(gl, {
       vertex: vert,
@@ -221,11 +241,11 @@ export default function Orb({
         iResolution: {
           value: new Vec3(gl.canvas.width, gl.canvas.height, gl.canvas.width / gl.canvas.height)
         },
-        hue: { value: hue },
+        hue: { value: initial.hue },
         hover: { value: 0 },
         rot: { value: 0 },
-        hoverIntensity: { value: hoverIntensity },
-        backgroundColor: { value: hexToVec3(backgroundColor) }
+        hoverIntensity: { value: initial.hoverIntensity },
+        backgroundColor: { value: hexToVec3(initial.backgroundColor) }
       }
     });
 
@@ -275,23 +295,35 @@ export default function Orb({
     container.addEventListener('mousemove', handleMouseMove);
     container.addEventListener('mouseleave', handleMouseLeave);
 
+    // Cache the last background color string so hexToVec3 only allocates
+    // when it actually changes — not 60× a second.
+    let lastBg = initial.backgroundColor;
+    let lastBgVec = hexToVec3(lastBg);
+
     let rafId: number;
     const update = (t: number) => {
       rafId = requestAnimationFrame(update);
       const dt = (t - lastTime) * 0.001;
       lastTime = t;
-      program.uniforms.iTime.value = t * 0.001;
-      program.uniforms.hue.value = hue;
-      program.uniforms.hoverIntensity.value = hoverIntensity;
 
-      const effectiveHover = forceHoverState ? 1 : targetHover;
+      const p = propsRef.current;
+      program.uniforms.iTime.value = t * 0.001;
+      program.uniforms.hue.value = p.hue;
+      program.uniforms.hoverIntensity.value = p.hoverIntensity;
+
+      const effectiveHover = p.forceHoverState ? 1 : targetHover;
       program.uniforms.hover.value += (effectiveHover - program.uniforms.hover.value) * 0.1;
 
-      if (rotateOnHover && effectiveHover > 0.5) {
+      if (p.rotateOnHover && effectiveHover > 0.5) {
         currentRot += dt * rotationSpeed;
       }
       program.uniforms.rot.value = currentRot;
-      program.uniforms.backgroundColor.value = hexToVec3(backgroundColor);
+
+      if (p.backgroundColor !== lastBg) {
+        lastBg = p.backgroundColor;
+        lastBgVec = hexToVec3(lastBg);
+      }
+      program.uniforms.backgroundColor.value = lastBgVec;
 
       renderer.render({ scene: mesh });
     };
@@ -302,10 +334,14 @@ export default function Orb({
       window.removeEventListener('resize', resize);
       container.removeEventListener('mousemove', handleMouseMove);
       container.removeEventListener('mouseleave', handleMouseLeave);
-      container.removeChild(gl.canvas);
+      if (gl.canvas.parentNode === container) {
+        container.removeChild(gl.canvas);
+      }
       gl.getExtension('WEBGL_lose_context')?.loseContext();
     };
-  }, [hue, hoverIntensity, rotateOnHover, forceHoverState, backgroundColor]);
+    // Run ONCE — props are read from propsRef each frame so they update live.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return <div ref={ctnDom} className="w-full h-full" />;
 }

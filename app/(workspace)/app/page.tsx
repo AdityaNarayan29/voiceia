@@ -8,13 +8,12 @@ import { Menu, Plus, History as HistoryIcon, Square } from "lucide-react";
 import { OrbMicButton } from "@/components/OrbMicButton";
 import { VoiceSelector } from "@/components/VoiceSelector";
 import { MicPermissionSheet } from "@/components/MicPermissionSheet";
-import { HistoryDrawer, HistorySidebar } from "@/components/HistoryDrawer";
 import { useVoiceState } from "@/lib/useVoiceState";
 import { useConversationHistory } from "@/lib/useConversationHistory";
 import { useNetworkStatus } from "@/lib/useNetworkStatus";
 import { useSettings } from "@/lib/useSettings";
-import { useEdgeSwipe } from "@/lib/useEdgeSwipe";
 import { DEFAULT_VOICE_ID } from "@/lib/constants";
+import { useGsapReveal } from "@/lib/useGsapReveal";
 import { cn } from "@/lib/utils";
 import type { Conversation, Message } from "@/lib/types";
 
@@ -27,12 +26,9 @@ const TranscriptArea = dynamic(
 );
 
 export default function VoicePage() {
-  // The live conversation in progress — always auto-saved on completion.
   const [liveMessages, setLiveMessages] = useState<Message[]>([]);
-  // A past conversation being viewed (read-only). null = live mode.
   const [viewing, setViewing] = useState<Conversation | null>(null);
   const [permissionSheetOpen, setPermissionSheetOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const { conversations, addConversation } = useConversationHistory();
   const { isOnline } = useNetworkStatus();
   const { settings, update, hydrated } = useSettings();
@@ -44,7 +40,6 @@ export default function VoicePage() {
 
   const handleConversationComplete = useCallback(
     (conversation: Conversation) => {
-      // Always save the live turn; never mutate viewing state.
       setLiveMessages((prev) => [...prev, ...conversation.messages]);
       addConversation(conversation);
     },
@@ -55,8 +50,6 @@ export default function VoicePage() {
     toast.error(message);
   }, []);
 
-  // Refs let onCycleEnd read the latest settings/startListening without
-  // re-wiring the voice state machine on every render.
   const startListeningRef = useRef<() => void>(() => {});
   const handsFreeRef = useRef(false);
   handsFreeRef.current = hydrated ? settings.handsFree : false;
@@ -64,7 +57,6 @@ export default function VoicePage() {
   const handleCycleEnd = useCallback(() => {
     if (!handsFreeRef.current) return;
     if (!isOnline) return;
-    // Defer so the orb visibly returns to idle before kicking back to listening.
     setTimeout(() => startListeningRef.current(), 250);
   }, [isOnline]);
 
@@ -95,9 +87,10 @@ export default function VoicePage() {
     }
   }, [permissionError]);
 
-  // Pick up a conversation chosen from another route (e.g. /settings sidebar)
-  // or honor a "new chat" intent from those pages.
-  useEffect(() => {
+  // Pick up a conversation chosen from the sidebar or honor a "new chat"
+  // intent. Listens to both sessionStorage (cross-route) and live events
+  // (same-route taps), so a sidebar click reliably mutates page state.
+  const applyResumeIntent = useCallback(() => {
     let id: string | null = null;
     let newChat = false;
     try {
@@ -113,37 +106,49 @@ export default function VoicePage() {
       setLiveMessages([]);
       return;
     }
-    if (!id || !conversations.length) return;
+    if (!id) return;
     const match = conversations.find((c) => c.id === id);
     if (match) setViewing(match);
   }, [conversations]);
 
-  const openHistory = useCallback(() => setHistoryOpen(true), []);
-  useEdgeSwipe({
-    edge: "left",
-    onSwipe: openHistory,
-    disabled: historyOpen || state === "listening",
-  });
+  useEffect(() => {
+    applyResumeIntent();
+  }, [applyResumeIntent]);
 
-  const handleSelectConversation = useCallback((c: Conversation) => {
-    setViewing(c);
+  useEffect(() => {
+    const resumeHandler = () => applyResumeIntent();
+    const newChatHandler = () => {
+      setViewing(null);
+      setLiveMessages([]);
+      try {
+        sessionStorage.removeItem("voiceai-new-chat");
+      } catch {
+        /* ignore */
+      }
+    };
+    window.addEventListener("voiceai:resume", resumeHandler);
+    window.addEventListener("voiceai:new-chat", newChatHandler);
+    return () => {
+      window.removeEventListener("voiceai:resume", resumeHandler);
+      window.removeEventListener("voiceai:new-chat", newChatHandler);
+    };
+  }, [applyResumeIntent]);
+
+  const openDrawer = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("voiceai:open-drawer"));
   }, []);
 
   const handleBackToLive = useCallback(() => {
     setViewing(null);
   }, []);
 
-  const handleNewChat = useCallback(() => {
-    setViewing(null);
-    setLiveMessages([]);
-  }, []);
-
   const handleMicPress = useCallback(() => {
     if (!isOnline) {
-      toast.error("You're offline — voice features need an internet connection.");
+      toast.error(
+        "You're offline — voice features need an internet connection.",
+      );
       return;
     }
-    // Speaking always operates on the live thread. Exit viewing mode first.
     if (viewing) setViewing(null);
     if (state === "idle") startListening();
     else if (state === "listening") stopListening();
@@ -151,10 +156,7 @@ export default function VoicePage() {
   }, [isOnline, state, startListening, stopListening, reset, viewing]);
 
   const displayMessages = useMemo<Message[]>(() => {
-    // When viewing a past chat, show only its messages (read-only).
     if (viewing) return viewing.messages;
-
-    // Live mode: persisted turns plus the in-flight transcript/response.
     const pending: Message[] = [];
     if (state === "processing" || state === "speaking") {
       if (transcript) {
@@ -177,22 +179,24 @@ export default function VoicePage() {
     return [...liveMessages, ...pending];
   }, [viewing, liveMessages, state, transcript, aiResponse]);
 
+  // Stagger the header + orb + transcript on first paint and on route entry.
+  // Only animates direct [data-reveal] descendants of the container.
+  const revealRef = useGsapReveal<HTMLDivElement>({
+    y: 14,
+    stagger: 0.08,
+    duration: 0.55,
+  });
+
   return (
-    <motion.main
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: "easeOut" }}
-      className="flex h-[100dvh] flex-col overflow-hidden lg:ml-[300px]"
+    <main
+      ref={revealRef}
+      className="flex h-[100dvh] flex-col overflow-hidden"
     >
       <h1 className="sr-only">VoiceAI — Talk to AI</h1>
-      <HistorySidebar
-        onSelect={handleSelectConversation}
-        onNewChat={handleNewChat}
-        activeId={viewing?.id ?? null}
-      />
       {!isOnline && (
         <div
           role="alert"
+          data-reveal
           className="w-full bg-error/10 px-4 py-2 text-center font-geistMono text-xs text-error"
         >
           No internet connection — voice unavailable
@@ -200,16 +204,15 @@ export default function VoicePage() {
       )}
 
       <header
+        data-reveal
         className="flex items-center justify-between gap-3 px-4 pt-4"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
       >
         <button
           type="button"
-          onClick={openHistory}
+          onClick={openDrawer}
           aria-label="Open conversation history"
-          aria-expanded={historyOpen}
-          aria-controls="history-drawer"
-          className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-borderSoft bg-bgCard text-textPrimary transition-colors hover:border-accent/30 hover:text-accent lg:hidden"
+          className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-borderSoft bg-bgCard text-textPrimary transition-all hover:border-accent/30 hover:text-accent hover:shadow-[0_0_18px_var(--accent-glow)] active:scale-95 lg:hidden"
         >
           <Menu size={20} aria-hidden />
         </button>
@@ -228,7 +231,11 @@ export default function VoicePage() {
             role="status"
           >
             <div className="flex min-w-0 items-center gap-2">
-              <HistoryIcon size={14} className="shrink-0 text-accent" aria-hidden />
+              <HistoryIcon
+                size={14}
+                className="shrink-0 text-accent"
+                aria-hidden
+              />
               <span className="truncate font-geistMono text-[11px] text-textMuted">
                 Viewing past chat ·{" "}
                 <span className="text-textPrimary">
@@ -251,9 +258,10 @@ export default function VoicePage() {
         )}
       </AnimatePresence>
 
-      {/* Orb + status label + stop pill. Label always present so the
-          user can tell which phase they're in without reading orb hue. */}
-      <section className="flex flex-1 flex-col items-center justify-center gap-3 px-4">
+      <section
+        data-reveal
+        className="flex flex-1 flex-col items-center justify-center gap-3 px-4"
+      >
         <OrbMicButton
           state={state}
           onClick={handleMicPress}
@@ -275,9 +283,11 @@ export default function VoicePage() {
               aria-hidden
               className={cn(
                 "h-1.5 w-1.5 rounded-full",
-                state === "listening" && "animate-pulse bg-accent shadow-[0_0_8px_var(--accent-glow)]",
+                state === "listening" &&
+                  "animate-pulse bg-accent shadow-[0_0_8px_var(--accent-glow)]",
                 state === "processing" && "animate-pulse bg-textMuted",
-                state === "speaking" && "bg-success shadow-[0_0_8px_rgba(0,255,136,0.4)]",
+                state === "speaking" &&
+                  "bg-success shadow-[0_0_8px_rgba(0,255,136,0.4)]",
                 state === "idle" && "bg-textMuted/40",
               )}
             />
@@ -298,9 +308,7 @@ export default function VoicePage() {
               exit={{ opacity: 0, y: 8 }}
               transition={{ duration: 0.18, ease: "easeOut" }}
               aria-label={
-                state === "speaking"
-                  ? "Stop speaking"
-                  : "Cancel response"
+                state === "speaking" ? "Stop speaking" : "Cancel response"
               }
               className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-borderSoft bg-bgCard px-5 font-geistMono text-xs text-textPrimary transition-colors hover:border-error/40 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bgPrimary"
             >
@@ -311,7 +319,7 @@ export default function VoicePage() {
         </AnimatePresence>
       </section>
 
-      <section className="px-4 pb-2">
+      <section data-reveal className="px-4 pb-2">
         <TranscriptArea
           messages={displayMessages}
           interimText={state === "listening" ? interimTranscript : ""}
@@ -322,14 +330,6 @@ export default function VoicePage() {
         open={permissionSheetOpen}
         onOpenChange={setPermissionSheetOpen}
       />
-
-      <HistoryDrawer
-        open={historyOpen}
-        onOpenChange={setHistoryOpen}
-        onSelect={handleSelectConversation}
-        onNewChat={handleNewChat}
-        activeId={viewing?.id ?? null}
-      />
-    </motion.main>
+    </main>
   );
 }

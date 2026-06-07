@@ -3,6 +3,7 @@ import { Syne } from "next/font/google";
 import localFont from "next/font/local";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider, themeBootScript } from "@/components/ThemeProvider";
+import { LandingBackground } from "@/components/LandingBackground";
 import "./globals.css";
 
 const syne = Syne({
@@ -73,7 +74,10 @@ export default function RootLayout({
           paddingLeft: "env(safe-area-inset-left)",
         }}
       >
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <LandingBackground />
+          {children}
+        </ThemeProvider>
         <Toaster />
       </body>
     </html>

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -18,15 +17,13 @@ import { Card } from "@/components/ui/card";
 import GlassSurface from "@/components/ui/glass-surface";
 import { HeroOrb, type OrbState } from "@/components/HeroOrb";
 import { VOICES } from "@/lib/constants";
+import { useGsapReveal } from "@/lib/useGsapReveal";
 
 /**
- * Ferrofluid is a WebGL component — dynamic import + ssr:false so
- * it doesn't try to construct a Renderer during server render.
- * Adds ~83 KB to client bundle (ogl + the component itself).
+ * The Ferrofluid WebGL background is now mounted at the root layout
+ * (LandingBackground) so it persists across navigation. Returning to "/"
+ * is instant — no Renderer re-init flash.
  */
-const Ferrofluid = dynamic(() => import("@/components/ui/ferrofluid"), {
-  ssr: false,
-});
 
 type DemoMessage = {
   role: "user" | "assistant";
@@ -158,31 +155,25 @@ export default function LandingPage() {
   const [orbState, setOrbState] = useState<OrbState>("idle");
   const demo = useScriptedDemo(setOrbState);
 
+  // Stagger-reveal hero chrome, feature cards, voice chips, and how-it-works
+  // steps. Each gets a [data-reveal] attribute below.
+  const revealRef = useGsapReveal<HTMLElement>({
+    y: 18,
+    stagger: 0.05,
+    duration: 0.6,
+  });
+
   return (
     <motion.main
+      ref={revealRef}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.5, ease: "easeOut" }}
-      className="relative min-h-[100dvh] overflow-x-hidden bg-bgPrimary"
+      // No solid bg here — the Ferrofluid canvas lives at z-0 on <body>
+      // and must remain visible. The body already paints bg-bgPrimary as
+      // a fallback for reduced motion.
+      className="relative min-h-[100dvh] overflow-x-hidden"
     >
-      {/*
-        Ferrofluid background.
-        Fixed to the viewport (position: fixed) so it stays put when the
-        page scrolls — the marketing content slides over it rather than
-        the bg moving away. Sits at z-0; all hero/feature content is
-        z-10. Auto-paused when the user has prefers-reduced-motion.
-      */}
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 z-0 motion-reduce:hidden"
-      >
-        <Ferrofluid
-          // Component defaults from react-bits, except glow halved (default
-          // 2 → 1) so the white trails don't bloom too brightly behind hero
-          // text on the dark bg.
-          glow={1}
-        />
-      </div>
       {/*
         Reduced-motion fallback: when motion is off, restore the static
         accent bloom so the hero doesn't look stripped.
@@ -202,6 +193,7 @@ export default function LandingPage() {
 
       {/* Top nav */}
       <header
+        data-reveal
         className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4 lg:px-10"
         style={{ paddingTop: "calc(env(safe-area-inset-top) + 1rem)" }}
       >
@@ -248,7 +240,10 @@ export default function LandingPage() {
       </header>
 
       {/* Hero */}
-      <section className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center px-6 pb-16 pt-8 text-center sm:pt-12 lg:px-10 lg:pb-24 lg:pt-16">
+      <section
+        data-reveal
+        className="relative z-10 mx-auto flex w-full max-w-6xl flex-col items-center px-6 pb-16 pt-8 text-center sm:pt-12 lg:px-10 lg:pb-24 lg:pt-16"
+      >
         <GlassSurface
           width="auto"
           height={36}
@@ -358,6 +353,7 @@ export default function LandingPage() {
       {/* Features */}
       <section
         id="features"
+        data-reveal
         className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 lg:px-10 lg:pb-28"
       >
         <div className="mb-8 flex items-end justify-between gap-4">
@@ -401,6 +397,7 @@ export default function LandingPage() {
       {/* Voices */}
       <section
         id="voices"
+        data-reveal
         className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 lg:px-10 lg:pb-28"
       >
         <div className="mb-8">
@@ -429,7 +426,10 @@ export default function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 lg:px-10 lg:pb-28">
+      <section
+        data-reveal
+        className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20 lg:px-10 lg:pb-28"
+      >
         <div className="mb-8">
           <h2 className="mb-2 font-geistMono text-[10px] uppercase tracking-widest text-textMuted">
             How it works
@@ -461,7 +461,10 @@ export default function LandingPage() {
       </section>
 
       {/* Install CTA */}
-      <section className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 lg:px-10">
+      <section
+        data-reveal
+        className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-24 lg:px-10"
+      >
         <Card className="relative overflow-hidden border-accent/25 bg-bgCard p-8 text-center sm:p-12">
           <div
             aria-hidden
