@@ -69,7 +69,9 @@ export async function kokoroSpeak({
       input: trimmed,
       voice: kokoroVoiceFor(voiceId),
       response_format: "mp3",
-      stream: true,
+      // We play the full clip as one blob (reliable), not via MediaSource,
+      // so ask for a non-streamed response.
+      stream: false,
     }),
     signal,
   });

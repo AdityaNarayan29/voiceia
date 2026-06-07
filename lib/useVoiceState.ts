@@ -149,6 +149,17 @@ export function useVoiceState(options: UseVoiceStateOptions) {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      // Stop the mic/recognition NOW. Otherwise Web Speech keeps listening
+      // during the (slow) TTS generation, fires another final transcript,
+      // and re-enters processVoice → aborts our in-flight TTS fetch, killing
+      // playback silently. We're done listening once we have the transcript.
+      if (useWebSpeech) {
+        try {
+          speech.stopListening();
+        } catch {
+          // ignore
+        }
+      }
       dispatch({ type: "SET_TRANSCRIPT", payload: transcript });
       dispatch({ type: "SET_PROCESSING" });
 
@@ -230,14 +241,23 @@ export function useVoiceState(options: UseVoiceStateOptions) {
         if (!started) finishCycle();
       };
 
-      // User chose system voice, OR Kokoro isn't configured.
-      if (voiceEngineRef.current === "system" || !isKokoroConfigured()) {
+      // TTS: Kokoro is the working engine. Browser speechSynthesis ("system")
+      // is non-functional on some platforms (macOS Chrome wedges with no
+      // audio), so it's only an automatic last resort when Kokoro is
+      // unreachable — never the primary path.
+      if (!isKokoroConfigured()) {
         playWithSynth();
         return;
       }
 
-      // Kokoro path. On any failure, fall back to system voice so the
-      // conversation never silently hangs.
+      // Kokoro path: fetch the full clip, then play it as one blob through the
+      // gesture-unlocked <audio> element (unlocked in startListening, kept
+      // alive by looping silence so .play() isn't blocked after the slow
+      // CPU generation). Flip to "speaking" BEFORE the fetch so the UI shows
+      // voice is being generated instead of sitting on "Thinking…". On any
+      // failure we just end the cycle — the reply text is already saved.
+      dispatch({ type: "SET_SPEAKING" });
+
       let speakRes: Response;
       try {
         speakRes = await kokoroSpeak({
@@ -247,29 +267,23 @@ export function useVoiceState(options: UseVoiceStateOptions) {
         });
       } catch (e) {
         if (controller.signal.aborted) return;
-        console.warn(
-          "Kokoro TTS unreachable, falling back to system voice:",
-          e instanceof Error ? e.message : e,
-        );
-        playWithSynth();
+        console.warn("Kokoro TTS unreachable:", e instanceof Error ? e.message : e);
+        reportError("Voice playback unavailable");
+        finishCycle();
         return;
       }
 
       if (cancelledRef.current) return;
 
-      dispatch({ type: "SET_SPEAKING" });
       streamingPlayer.setOnEnd(finishCycle);
       try {
-        await streamingPlayer.playStream(speakRes, "audio/mpeg");
+        await streamingPlayer.playBlob(speakRes);
       } catch (e) {
-        console.warn(
-          "Streaming playback failed, falling back to system voice:",
-          e instanceof Error ? e.message : e,
-        );
-        playWithSynth();
+        console.warn("Kokoro playback failed:", e instanceof Error ? e.message : e);
+        finishCycle();
       }
     },
-    [synth, streamingPlayer, reportError, completeConversation],
+    [synth, streamingPlayer, reportError, completeConversation, useWebSpeech, speech],
   );
 
   useEffect(() => {
@@ -344,6 +358,13 @@ export function useVoiceState(options: UseVoiceStateOptions) {
   }, []);
 
   const startListening = useCallback(async () => {
+    // Spend the user gesture NOW to unlock audio playback. By the time TTS
+    // audio is ready (after the LLM stream finishes) the gesture is gone and
+    // the browser would block .play()/speechSynthesis silently — that's the
+    // "voice agent won't respond" bug. Priming here keeps audio allowed.
+    streamingPlayer.unlock();
+    synth.unlock();
+
     cancelledRef.current = false;
     abortRef.current?.abort();
     abortRef.current = null;
@@ -382,7 +403,7 @@ export function useVoiceState(options: UseVoiceStateOptions) {
         dispatch({ type: "RESET" });
       }
     }
-  }, [useWebSpeech, speech, recorder, transcribePartial]);
+  }, [useWebSpeech, speech, recorder, transcribePartial, streamingPlayer, synth]);
 
   const stopListening = useCallback(async () => {
     if (stateRef.current !== "listening") return;
