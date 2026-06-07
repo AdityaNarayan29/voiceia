@@ -320,23 +320,65 @@ export default function SettingsPage() {
                     Voice engine
                   </p>
                   <span className="font-geistMono text-[10px] uppercase tracking-wider text-textMuted">
-                    High quality
+                    {settings.voiceEngine === "system"
+                      ? "Fast"
+                      : "High quality"}
                   </span>
                 </div>
-                <div className="flex items-center gap-3 rounded-lg border border-borderSoft bg-bgSecondary/40 p-3">
-                  <span className="flex h-2 w-2 shrink-0 rounded-full bg-success shadow-[0_0_8px_var(--success)]" />
-                  <div className="flex flex-col">
-                    <span className="font-syne text-xs font-semibold text-accent">
-                      Kokoro
-                    </span>
-                    <span className="font-geistMono text-[10px] text-textMuted">
-                      Local · high quality
-                    </span>
-                  </div>
+                <div
+                  role="radiogroup"
+                  aria-label="Voice engine"
+                  className="grid grid-cols-2 gap-1 rounded-lg border border-borderSoft bg-bgSecondary/40 p-1"
+                >
+                  {[
+                    {
+                      id: "system" as const,
+                      label: "System voice",
+                      sub: "Instant · OS voices",
+                    },
+                    {
+                      id: "kokoro" as const,
+                      label: "Kokoro",
+                      sub: "Higher quality · slower",
+                    },
+                  ].map((opt) => {
+                    const active = settings.voiceEngine === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        disabled={!hydrated}
+                        onClick={() => update("voiceEngine", opt.id)}
+                        className={cn(
+                          "flex flex-col items-start gap-0.5 rounded-md px-3 py-2 text-left transition-all duration-200",
+                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
+                          "disabled:cursor-not-allowed disabled:opacity-50",
+                          active
+                            ? "bg-accent/10 text-accent shadow-[inset_0_0_0_1px_var(--accent)]"
+                            : "text-textPrimary hover:bg-bgCard",
+                        )}
+                      >
+                        <span className="font-syne text-xs font-semibold">
+                          {opt.label}
+                        </span>
+                        <span
+                          className={cn(
+                            "font-geistMono text-[10px]",
+                            active ? "text-accent/80" : "text-textMuted",
+                          )}
+                        >
+                          {opt.sub}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
                 <p className="mt-2 font-geistMono text-[11px] text-textMuted">
-                  Uses local Kokoro. Voice matches the previews above. Audio
-                  takes ~10–20s to start on CPU; a faster option is coming.
+                  {settings.voiceEngine === "system"
+                    ? "Uses your OS voice (Samantha, Daniel, etc.). Plays instantly. If it ever goes silent, fully quit and reopen your browser to reset it."
+                    : "Uses local Kokoro. Voice matches the previews above. Audio takes ~10–20s to start on CPU."}
                 </p>
               </div>
 

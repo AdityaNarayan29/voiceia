@@ -29,7 +29,7 @@ const DEFAULT_SETTINGS: Settings = {
   micSensitivity: 75,
   autoStop: true,
   darkMode: true,
-  voiceEngine: "kokoro",
+  voiceEngine: "system",
   handsFree: true,
 };
 
@@ -39,12 +39,7 @@ function loadFromStorage(): Settings {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<Settings>;
-    const merged = { ...DEFAULT_SETTINGS, ...parsed };
-    // Migration: the browser "system" speechSynthesis engine is non-functional
-    // on some platforms (notably macOS Chrome, where it wedges and emits no
-    // audio). Coerce any stored "system" choice to the working Kokoro engine.
-    if (merged.voiceEngine === "system") merged.voiceEngine = "kokoro";
-    return merged;
+    return { ...DEFAULT_SETTINGS, ...parsed };
   } catch {
     return DEFAULT_SETTINGS;
   }

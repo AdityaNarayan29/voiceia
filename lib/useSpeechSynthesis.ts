@@ -144,8 +144,14 @@ export function useSpeechSynthesis(): SpeechSynthesisHook {
     const trimmed = text.trim();
     if (!trimmed) return false;
 
+    // Only cancel if something is actually queued/playing. Calling cancel()
+    // on an idle engine is a no-op at best and, combined with an immediate
+    // speak(), can poison Chrome's speech state — so guard it.
     try {
-      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
+      window.speechSynthesis.resume(); // clear any stuck paused state
     } catch {
       // ignore
     }
@@ -213,7 +219,9 @@ export function useSpeechSynthesis(): SpeechSynthesisHook {
     }
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     try {
-      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+        window.speechSynthesis.cancel();
+      }
     } catch {
       // ignore
     }
@@ -228,12 +236,13 @@ export function useSpeechSynthesis(): SpeechSynthesisHook {
   const unlock = useCallback(() => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     try {
-      // Speaking a near-silent utterance inside the gesture warms up the
-      // engine so a later speak() (after the LLM stream) isn't blocked.
-      const u = new SpeechSynthesisUtterance(" ");
-      u.volume = 0;
-      window.speechSynthesis.speak(u);
-      window.speechSynthesis.cancel();
+      // Clear any leftover paused state from a prior turn so the next speak()
+      // isn't blocked. Do NOT do the old "speak() then immediate cancel()"
+      // warmup — cancelling an utterance the instant it starts is a known way
+      // to poison Chrome's global speechSynthesis into a stuck speaking=true
+      // state (no audio, no events) that survives reloads until Chrome is
+      // restarted. resume() is safe and enough.
+      window.speechSynthesis.resume();
     } catch {
       // ignore
     }

@@ -241,11 +241,15 @@ export function useVoiceState(options: UseVoiceStateOptions) {
         if (!started) finishCycle();
       };
 
-      // TTS: Kokoro is the working engine. Browser speechSynthesis ("system")
-      // is non-functional on some platforms (macOS Chrome wedges with no
-      // audio), so it's only an automatic last resort when Kokoro is
-      // unreachable — never the primary path.
-      if (!isKokoroConfigured()) {
+      // TTS engine — respects the user's Settings choice:
+      //   "system" → browser speechSynthesis: instant and free. (If Chrome's
+      //              speech engine ever gets stuck — no audio, stuck on
+      //              "Speaking…" — fully quit and reopen Chrome to reset it;
+      //              the hardened cancel/resume logic in useSpeechSynthesis
+      //              avoids re-triggering that stuck state.)
+      //   "kokoro" → local Kokoro: high quality but slow on CPU.
+      // Falls back to system if Kokoro is selected but not configured.
+      if (voiceEngineRef.current === "system" || !isKokoroConfigured()) {
         playWithSynth();
         return;
       }
