@@ -493,6 +493,22 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     };
   }, []);
 
+  // Forget what was said earlier in this chat session — the next turn
+  // will start the LLM with no prior context. Used by the page when
+  // the user hits "New chat" so the next utterance opens a fresh
+  // session row in the sidebar.
+  const clearSessionHistory = useCallback(() => {
+    sessionHistoryRef.current = [];
+  }, []);
+
+  // Seed the LLM context from prior messages — used when resuming a
+  // past conversation from the sidebar. The next turn will be sent to
+  // /api/chat with these messages as history so the model picks up
+  // mid-thread instead of starting cold.
+  const setSessionHistory = useCallback((messages: Message[]) => {
+    sessionHistoryRef.current = messages.slice();
+  }, []);
+
   return {
     state: voice.state,
     transcript: voice.transcript,
@@ -505,5 +521,7 @@ export function useVoiceState(options: UseVoiceStateOptions) {
     startListening,
     stopListening,
     reset,
+    clearSessionHistory,
+    setSessionHistory,
   };
 }

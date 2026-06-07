@@ -25,6 +25,20 @@ export function WorkspaceShell({ children }: { children: React.ReactNode }) {
     setMobileOpen(false);
   }, [pathname]);
 
+  // The /app page emits this event whenever it adopts, mints, or clears
+  // its current session id so the sidebar can highlight the matching
+  // row in real time (e.g. after the first utterance of a new chat
+  // mints a fresh id).
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<string | null>).detail;
+      setActiveId(detail ?? null);
+    };
+    window.addEventListener("voiceai:session-change", handler);
+    return () =>
+      window.removeEventListener("voiceai:session-change", handler);
+  }, []);
+
   const handleSelect = useCallback(
     (c: Conversation) => {
       try {

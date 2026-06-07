@@ -9,6 +9,14 @@ const MAX_CONVERSATIONS = 50;
 export interface ConversationHistoryHook {
   conversations: Conversation[];
   addConversation: (c: Conversation) => void;
+  /**
+   * Insert or update a conversation by id. If a row with that id already
+   * exists it is replaced in place (preserving its sidebar slot); otherwise
+   * the row is prepended. Used to group multiple voice turns within one
+   * chat session into a single sidebar entry.
+   */
+  upsertConversation: (c: Conversation) => void;
+  getConversation: (id: string) => Conversation | undefined;
   clearHistory: () => void;
   hydrated: boolean;
 }
@@ -107,6 +115,26 @@ export function useConversationHistory(): ConversationHistoryHook {
     setList([c, ...current].slice(0, MAX_CONVERSATIONS));
   }, []);
 
+  const upsertConversation = useCallback((c: Conversation) => {
+    const idx = current.findIndex((existing) => existing.id === c.id);
+    if (idx === -1) {
+      setList([c, ...current].slice(0, MAX_CONVERSATIONS));
+      return;
+    }
+    // Replace in place — preserves sidebar position so the active session
+    // doesn't reshuffle every turn. Pin its timestamp to the original
+    // session start so date labels stay stable.
+    const next = current.slice();
+    next[idx] = { ...c, timestamp: current[idx].timestamp };
+    setList(next);
+  }, []);
+
+  const getConversation = useCallback(
+    (id: string) => current.find((c) => c.id === id),
+    // current is module-scoped; we re-read on each call so no dep needed.
+    [],
+  );
+
   const clearHistory = useCallback(() => {
     setList([]);
   }, []);
@@ -114,6 +142,8 @@ export function useConversationHistory(): ConversationHistoryHook {
   return {
     conversations,
     addConversation,
+    upsertConversation,
+    getConversation,
     clearHistory,
     hydrated: isHydrated,
   };

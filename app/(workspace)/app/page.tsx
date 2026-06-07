@@ -29,7 +29,8 @@ export default function VoicePage() {
   const [liveMessages, setLiveMessages] = useState<Message[]>([]);
   const [viewing, setViewing] = useState<Conversation | null>(null);
   const [permissionSheetOpen, setPermissionSheetOpen] = useState(false);
-  const { conversations, addConversation } = useConversationHistory();
+  const { conversations, upsertConversation, getConversation } =
+    useConversationHistory();
   const { isOnline } = useNetworkStatus();
   const { settings, update, hydrated } = useSettings();
   const voice = hydrated ? settings.voiceId : DEFAULT_VOICE_ID;
@@ -38,12 +39,56 @@ export default function VoicePage() {
     [update],
   );
 
+  // Identity of the chat session whose row in the sidebar this page is
+  // currently building. Null = no session started yet; the next completed
+  // turn will mint a new one. "New chat" resets this to null. Tapping a
+  // past sidebar row adopts that row's id so further turns append to it.
+  const currentSessionIdRef = useRef<string | null>(null);
+  const sessionStartRef = useRef<number>(0);
+  const liveMessagesRef = useRef<Message[]>([]);
+  liveMessagesRef.current = liveMessages;
+
+  function newSessionId(): string {
+    return `c-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  }
+
+  function emitSessionChange(id: string | null) {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("voiceai:session-change", { detail: id }),
+    );
+  }
+
   const handleConversationComplete = useCallback(
     (conversation: Conversation) => {
-      setLiveMessages((prev) => [...prev, ...conversation.messages]);
-      addConversation(conversation);
+      // The hook hands us a fresh conversation each turn with just the
+      // latest user+assistant pair. We accumulate it into the live thread
+      // and write the WHOLE thread into a single sidebar row keyed by
+      // currentSessionIdRef so multi-turn chats group into one entry.
+      const turnMessages = conversation.messages;
+      const nextLive = [...liveMessagesRef.current, ...turnMessages];
+      setLiveMessages(nextLive);
+
+      if (!currentSessionIdRef.current) {
+        currentSessionIdRef.current = newSessionId();
+        sessionStartRef.current = conversation.timestamp;
+        emitSessionChange(currentSessionIdRef.current);
+      }
+
+      const totalDuration = Math.max(
+        1,
+        Math.round((Date.now() - sessionStartRef.current) / 1000),
+      );
+
+      upsertConversation({
+        id: currentSessionIdRef.current,
+        timestamp: sessionStartRef.current,
+        duration: totalDuration,
+        voice: conversation.voice,
+        messages: nextLive,
+      });
     },
-    [addConversation],
+    [upsertConversation],
   );
 
   const handleError = useCallback((message: string) => {
@@ -69,6 +114,8 @@ export default function VoicePage() {
     startListening,
     stopListening,
     reset,
+    clearSessionHistory,
+    setSessionHistory,
   } = useVoiceState({
     voiceId: voice,
     micSensitivity: settings.micSensitivity,
@@ -87,6 +134,32 @@ export default function VoicePage() {
     }
   }, [permissionError]);
 
+  // Adopt a past chat as the active session: load its turns into the
+  // live thread, seed the LLM with the same history, and reuse its id
+  // so subsequent turns append to the same sidebar row.
+  const adoptSession = useCallback(
+    (c: Conversation) => {
+      currentSessionIdRef.current = c.id;
+      sessionStartRef.current = c.timestamp;
+      setLiveMessages(c.messages);
+      setSessionHistory(c.messages);
+      setViewing(null);
+      emitSessionChange(c.id);
+    },
+    [setSessionHistory],
+  );
+
+  // Forget the active session — next utterance will mint a new row and
+  // start the LLM with no prior context.
+  const startNewSession = useCallback(() => {
+    currentSessionIdRef.current = null;
+    sessionStartRef.current = 0;
+    setLiveMessages([]);
+    setViewing(null);
+    clearSessionHistory();
+    emitSessionChange(null);
+  }, [clearSessionHistory]);
+
   // Pick up a conversation chosen from the sidebar or honor a "new chat"
   // intent. Listens to both sessionStorage (cross-route) and live events
   // (same-route taps), so a sidebar click reliably mutates page state.
@@ -102,14 +175,13 @@ export default function VoicePage() {
       return;
     }
     if (newChat) {
-      setViewing(null);
-      setLiveMessages([]);
+      startNewSession();
       return;
     }
     if (!id) return;
-    const match = conversations.find((c) => c.id === id);
-    if (match) setViewing(match);
-  }, [conversations]);
+    const match = getConversation(id) ?? conversations.find((c) => c.id === id);
+    if (match) adoptSession(match);
+  }, [conversations, getConversation, adoptSession, startNewSession]);
 
   useEffect(() => {
     applyResumeIntent();
@@ -118,8 +190,7 @@ export default function VoicePage() {
   useEffect(() => {
     const resumeHandler = () => applyResumeIntent();
     const newChatHandler = () => {
-      setViewing(null);
-      setLiveMessages([]);
+      startNewSession();
       try {
         sessionStorage.removeItem("voiceai-new-chat");
       } catch {
@@ -132,15 +203,22 @@ export default function VoicePage() {
       window.removeEventListener("voiceai:resume", resumeHandler);
       window.removeEventListener("voiceai:new-chat", newChatHandler);
     };
-  }, [applyResumeIntent]);
+  }, [applyResumeIntent, startNewSession]);
 
   const openDrawer = useCallback(() => {
     window.dispatchEvent(new CustomEvent("voiceai:open-drawer"));
   }, []);
 
+  // "Back to live" pill: if there's an in-progress live session, drop
+  // the viewing-only state and return to it. Otherwise, the pill turns
+  // into "New chat" and starts a fresh session instead.
   const handleBackToLive = useCallback(() => {
-    setViewing(null);
-  }, []);
+    if (liveMessages.length > 0) {
+      setViewing(null);
+    } else {
+      startNewSession();
+    }
+  }, [liveMessages.length, startNewSession]);
 
   const handleMicPress = useCallback(() => {
     if (!isOnline) {
@@ -149,11 +227,22 @@ export default function VoicePage() {
       );
       return;
     }
-    if (viewing) setViewing(null);
+    // Speaking while viewing a past chat: adopt it as the active session
+    // so the new turn appends to its sidebar row rather than orphaning
+    // into a new one.
+    if (viewing) adoptSession(viewing);
     if (state === "idle") startListening();
     else if (state === "listening") stopListening();
     else if (state === "processing" || state === "speaking") reset();
-  }, [isOnline, state, startListening, stopListening, reset, viewing]);
+  }, [
+    isOnline,
+    state,
+    startListening,
+    stopListening,
+    reset,
+    viewing,
+    adoptSession,
+  ]);
 
   const displayMessages = useMemo<Message[]>(() => {
     if (viewing) return viewing.messages;
